@@ -15,8 +15,8 @@ struct PanelView: View {
             header
             focusCard
             HStack(spacing: 8) {
-                Tile(icon: "timer", title: "今日の集中", value: duration(s.focusSeconds))
-                Tile(icon: "hand.raised.fill", title: "ブロック", value: "\(s.blocked)回")
+                Tile(icon: "timer", title: "Focused today", value: duration(s.focusSeconds))
+                Tile(icon: "hand.raised.fill", title: "Blocked", value: "\(s.blocked)")
             }
             if s.enabled, !s.schedules.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -37,10 +37,10 @@ struct PanelView: View {
             }
             Divider()
             HStack {
-                Button { openWindow(id: "settings"); NSApp.activate() } label: { Label("設定…", systemImage: "gearshape") }
+                Button { openWindow(id: "settings"); NSApp.activate() } label: { Label("Settings…", systemImage: "gearshape") }
                     .keyboardShortcut(",")
                 Spacer()
-                if !s.locked { Button("終了") { NSApp.terminate(nil) }.keyboardShortcut("q") }
+                if !s.locked { Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut("q") }
             }
             .buttonStyle(.borderless)
         }
@@ -60,20 +60,20 @@ struct PanelView: View {
                 Text(status).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if s.locked { Image(systemName: "lock.fill").foregroundStyle(.secondary).help("厳格モード: 集中中は変更できません") }
+            if s.locked { Image(systemName: "lock.fill").foregroundStyle(.secondary).help("Strict mode: locked until focus ends") }
             Toggle("", isOn: $s.enabled).toggleStyle(.switch).labelsHidden().controlSize(.small)
-                .disabled(s.locked).help("スケジュールを有効にする")
+                .disabled(s.locked).help("Enable schedules")
         }
     }
 
     private var status: String {
-        if s.isActive { return "集中中" + (s.endsAt.map { " · \(clock($0)) まで" } ?? "") }
+        if s.isActive { return "Focusing" + (s.endsAt.map { " · until \(clock($0))" } ?? "") }
         if let n = s.nextStartDate {
             let cal = Calendar.current
-            let day = cal.isDateInToday(n) ? "" : cal.isDateInTomorrow(n) ? "明日 " : "\(dayNames[cal.component(.weekday, from: n)])曜 "
-            return "次は \(day)\(clock(n)) から"
+            let day = cal.isDateInToday(n) ? "" : cal.isDateInTomorrow(n) ? "tomorrow " : "\(dayNames[cal.component(.weekday, from: n)]) "
+            return "Next: \(day)\(clock(n))"
         }
-        return s.enabled ? "待機中" : "スケジュールはオフ"
+        return s.enabled ? "Idle" : "Schedules off"
     }
 
     @ViewBuilder private var focusCard: some View {
@@ -85,18 +85,18 @@ struct PanelView: View {
                                       : String(format: "%02d:%02d", left / 60, left % 60))
                         .font(.system(size: 30, weight: .semibold, design: .rounded)).monospacedDigit()
                     Spacer()
-                    if s.isManual, !s.locked { Button("停止") { s.stopFocus() }.controlSize(.small) }
+                    if s.isManual, !s.locked { Button("Stop") { s.stopFocus() }.controlSize(.small) }
                 }
-                Text(s.isManual ? "クイック集中 · \(clock(end)) に終了" : "スケジュール · \(clock(end)) に終了")
+                Text(s.isManual ? "Quick focus · ends at \(clock(end))" : "Scheduled · ends at \(clock(end))")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("今すぐ集中").font(.subheadline.weight(.semibold))
+                Text("Focus now").font(.subheadline.weight(.semibold))
             }
             if !s.isActive || s.isManual {
                 HStack(spacing: 6) {
                     ForEach(s.presets, id: \.self) { m in
                         Button { s.startFocus(m) } label: {
-                            Text(s.isManual ? "+\(m)分" : "\(m)分").frame(maxWidth: .infinity)
+                            Text(s.isManual ? "+\(m)m" : "\(m) min").frame(maxWidth: .infinity)
                         }
                         .controlSize(.regular)
                     }
@@ -129,14 +129,14 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             if s.locked {
-                Label("厳格モード中のため、集中タイムが終わるまで設定は変更できません", systemImage: "lock.fill")
+                Label("Strict mode is on. Settings are locked until this focus session ends.", systemImage: "lock.fill")
                     .font(.callout).frame(maxWidth: .infinity).padding(8).background(.orange.opacity(0.15))
             }
             TabView {
-                GeneralTab().tabItem { Label("一般", systemImage: "gearshape") }
-                SchedulesTab().tabItem { Label("スケジュール", systemImage: "calendar") }
-                AppsTab().tabItem { Label("アプリ", systemImage: "square.grid.2x2") }
-                SitesTab().tabItem { Label("サイト", systemImage: "globe") }
+                GeneralTab().tabItem { Label("General", systemImage: "gearshape") }
+                SchedulesTab().tabItem { Label("Schedules", systemImage: "calendar") }
+                AppsTab().tabItem { Label("Apps", systemImage: "square.grid.2x2") }
+                SitesTab().tabItem { Label("Sites", systemImage: "globe") }
             }
         }
         .frame(width: 500, height: 480)
@@ -147,30 +147,30 @@ struct GeneralTab: View {
     @EnvironmentObject var s: Store
     var body: some View {
         Form {
-            Section("起動") {
-                Toggle("ログイン時に起動", isOn: $s.launchAtLogin)
+            Section("Startup") {
+                Toggle("Launch at login", isOn: $s.launchAtLogin)
                 if let e = s.loginError { Text(e).font(.caption).foregroundStyle(.red) }
             }
-            Section("集中タイム") {
+            Section("Focus") {
                 Toggle(isOn: $s.strict) {
-                    Text("厳格モード")
-                    Text("集中中は設定の変更・停止・アプリの終了ができなくなります")
+                    Text("Strict mode")
+                    Text("While focusing, you can't change settings, stop, or quit Deepwork.")
                 }
-                Toggle("開始・終了を通知", isOn: $s.notify)
+                Toggle("Notify when focus starts and ends", isOn: $s.notify)
             }
-            Section("ブロックの方法") {
-                Picker("許可していないアプリ", selection: $s.appAction) {
-                    Text("終了する").tag(AppAction.quit)
-                    Text("隠すだけ").tag(AppAction.hide)
+            Section("Blocking") {
+                Picker("Apps not on the list", selection: $s.appAction) {
+                    Text("Quit").tag(AppAction.quit)
+                    Text("Hide").tag(AppAction.hide)
                 }
-                Picker("許可していないサイト (Dia)", selection: $s.siteAction) {
-                    Text("ブロック画面を表示").tag(SiteAction.page)
-                    Text("タブを閉じる").tag(SiteAction.close)
+                Picker("Sites not on the list (Dia)", selection: $s.siteAction) {
+                    Text("Show block page").tag(SiteAction.page)
+                    Text("Close tab").tag(SiteAction.close)
                 }
             }
-            Section("クイック集中の時間") {
+            Section("Quick focus durations") {
                 ForEach(s.presets.indices, id: \.self) { i in
-                    Stepper("\(s.presets[i]) 分", value: $s.presets[i], in: 5...240, step: 5)
+                    Stepper("\(s.presets[i]) min", value: $s.presets[i], in: 5...240, step: 5)
                 }
             }
         }
@@ -183,18 +183,18 @@ struct SchedulesTab: View {
     @EnvironmentObject var s: Store
     var body: some View {
         Form {
-            Section { Toggle("スケジュールを有効にする", isOn: $s.enabled) }
+            Section { Toggle("Enable schedules", isOn: $s.enabled) }
             ForEach($s.schedules) { $sch in
                 Section {
                     WeekdayPicker(days: $sch.days)
-                    DatePicker("開始", selection: timeBinding($sch.start), displayedComponents: .hourAndMinute)
-                    DatePicker("終了", selection: timeBinding($sch.end), displayedComponents: .hourAndMinute)
-                    if sch.start >= sch.end { Text("日付をまたいで翌日 \(hhmm(sch.end)) まで").font(.caption).foregroundStyle(.secondary) }
-                    Button("このスケジュールを削除", role: .destructive) { s.schedules.removeAll { $0.id == sch.id } }
+                    DatePicker("Start", selection: timeBinding($sch.start), displayedComponents: .hourAndMinute)
+                    DatePicker("End", selection: timeBinding($sch.end), displayedComponents: .hourAndMinute)
+                    if sch.start >= sch.end { Text("Runs overnight until \(hhmm(sch.end)) the next day").font(.caption).foregroundStyle(.secondary) }
+                    Button("Delete schedule", role: .destructive) { s.schedules.removeAll { $0.id == sch.id } }
                         .buttonStyle(.borderless)
                 }
             }
-            Section { Button { s.schedules.append(Schedule()) } label: { Label("スケジュールを追加", systemImage: "plus") } }
+            Section { Button { s.schedules.append(Schedule()) } label: { Label("Add schedule", systemImage: "plus") } }
         }
         .formStyle(.grouped)
         .disabled(s.locked)
@@ -208,7 +208,7 @@ struct WeekdayPicker: View {
             ForEach(weekOrder, id: \.self) { d in
                 let on = days.contains(d)
                 Button { if on { days.remove(d) } else { days.insert(d) } } label: {
-                    Text(dayNames[d]).font(.callout.weight(.medium))
+                    Text(dayNames[d].prefix(2)).font(.callout.weight(.medium))
                         .frame(width: 30, height: 30)
                         .background(Circle().fill(on ? AnyShapeStyle(accentGradient) : AnyShapeStyle(Color.primary.opacity(0.07))))
                         .foregroundStyle(on ? .white : .primary)
@@ -225,12 +225,12 @@ struct AppsTab: View {
         Form {
             Section {
                 ForEach(s.apps, id: \.self) { id in AppRow(id: id) { s.apps.removeAll { $0 == id } } }
-            } header: { Text("集中中に使えるアプリ") } footer: {
-                Text("Finder とシステム設定は常に使えます。Dia を外すと、Dia 自体がブロックされます。").font(.caption).foregroundStyle(.secondary)
+            } header: { Text("Allowed apps") } footer: {
+                Text("Finder and System Settings are always allowed. Remove Dia and Dia itself gets blocked.").font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                Button { s.addApps() } label: { Label("アプリを選んで追加…", systemImage: "plus") }
-                Menu("実行中のアプリから追加") {
+                Button { s.addApps() } label: { Label("Choose apps…", systemImage: "plus") }
+                Menu("Add a running app") {
                     ForEach(NSWorkspace.shared.runningApplications.filter {
                         $0.activationPolicy == .regular && !s.apps.contains($0.bundleIdentifier ?? "") && $0.bundleIdentifier != Bundle.main.bundleIdentifier
                     }, id: \.processIdentifier) { app in
@@ -251,12 +251,12 @@ struct SitesTab: View {
         Form {
             Section {
                 ForEach(s.domains, id: \.self) { d in Row(icon: Image(systemName: "globe"), title: d) { s.domains.removeAll { $0 == d } } }
-                TextField("ドメインを追加", text: $newDomain, prompt: Text("example.com"))
+                TextField("Add domain", text: $newDomain, prompt: Text("example.com"))
                     .onSubmit { s.addDomain(newDomain); newDomain = "" }
-            } header: { Text("集中中に開けるサイト (Dia)") } footer: {
-                Text("サブドメインも含めて許可されます。新しいタブなど Dia の内部ページは常に開けます。").font(.caption).foregroundStyle(.secondary)
+            } header: { Text("Allowed sites (Dia)") } footer: {
+                Text("Subdomains are included. Dia's own pages, like a new tab, are always allowed.").font(.caption).foregroundStyle(.secondary)
             }
-            Section { Button { s.addCurrentDiaSite() } label: { Label("Dia で開いているサイトを追加", systemImage: "plus.circle") } }
+            Section { Button { s.addCurrentDiaSite() } label: { Label("Add the site open in Dia", systemImage: "plus.circle") } }
         }
         .formStyle(.grouped)
         .disabled(s.locked)
@@ -305,7 +305,7 @@ struct DeepworkApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("Deepwork 設定", id: "settings") {
+        Window("Deepwork Settings", id: "settings") {
             SettingsView().environmentObject(store)
         }
         .windowResizability(.contentSize)

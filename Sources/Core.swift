@@ -6,7 +6,7 @@ import UserNotifications
 let diaID = "company.thebrowser.dia"
 let alwaysAllowed: Set<String> = ["com.apple.finder", "com.apple.systempreferences"]
 let weekOrder = [2, 3, 4, 5, 6, 7, 1] // Calendar weekday, Monday first
-let dayNames = ["", "日", "月", "火", "水", "木", "金", "土"]
+let dayNames = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
 // MARK: - Model / pure logic
 
@@ -29,11 +29,11 @@ enum SiteAction: String { case page, close }
 
 func daysLabel(_ d: Set<Int>) -> String {
     switch d {
-    case Set(1...7): "毎日"
-    case [2, 3, 4, 5, 6]: "平日"
-    case [1, 7]: "週末"
-    case []: "曜日なし"
-    default: weekOrder.filter(d.contains).map { dayNames[$0] }.joined(separator: "・")
+    case Set(1...7): "Every day"
+    case [2, 3, 4, 5, 6]: "Weekdays"
+    case [1, 7]: "Weekends"
+    case []: "No days"
+    default: weekOrder.filter(d.contains).map { dayNames[$0] }.joined(separator: ", ")
     }
 }
 
@@ -63,7 +63,7 @@ func normalizeDomain(_ s: String) -> String {
 
 func hhmm(_ m: Int) -> String { String(format: "%d:%02d", m / 60, m % 60) }
 func clock(_ d: Date) -> String { let c = Calendar.current.dateComponents([.hour, .minute], from: d); return hhmm(c.hour! * 60 + c.minute!) }
-func duration(_ sec: Int) -> String { sec >= 3600 ? "\(sec / 3600)時間\(sec % 3600 / 60)分" : "\(sec / 60)分" }
+func duration(_ sec: Int) -> String { sec >= 3600 ? "\(sec / 3600)h \(sec % 3600 / 60)m" : "\(sec / 60)m" }
 
 func selfTest() {
     assert(Schedule().contains(weekday: 2, minute: 600))
@@ -76,7 +76,7 @@ func selfTest() {
     let sat = cal.date(from: DateComponents(year: 2026, month: 11, day: 7, hour: 8))!
     assert(nextStart([Schedule()], after: mon0800, cal: cal) == mon0800.addingTimeInterval(3600))
     assert(nextStart([Schedule()], after: sat, cal: cal) == cal.date(from: DateComponents(year: 2026, month: 11, day: 9, hour: 9)))
-    assert(daysLabel([2, 3, 4, 5, 6]) == "平日"); assert(daysLabel([2, 4]) == "月・水")
+    assert(daysLabel([2, 3, 4, 5, 6]) == "Weekdays"); assert(daysLabel([2, 4]) == "Mon, Wed")
     assert(isAllowed("https://docs.github.com/x", ["github.com"]))
     assert(!isAllowed("https://notgithub.com", ["github.com"]))
     assert(isAllowed("dia://newtab", []))
@@ -85,9 +85,9 @@ func selfTest() {
 }
 
 let blockedURL = "data:text/html;charset=utf-8," + """
-<html><body style="margin:0;height:100vh;display:grid;place-items:center;font:600 22px -apple-system;\
+<html><head><title>Blocked by Deepwork</title></head><body style="margin:0;height:100vh;display:grid;place-items:center;font:600 22px -apple-system;\
 background:linear-gradient(#1e1b4b,#0f172a);color:#cbd5e1"><div style="text-align:center"><div style="font-size:64px">☁️</div>\
-集中タイム中です<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">このサイトは許可されていません</div></div></body></html>
+Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">This site isn't on your allow list</div></div></body></html>
 """.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
 
 // MARK: - Store + enforcement
@@ -218,8 +218,8 @@ background:linear-gradient(#1e1b4b,#0f172a);color:#cbd5e1"><div style="text-alig
         let active = isActive
         if active != wasActive {
             wasActive = active
-            if active { post("集中タイム開始", endsAt.map { "\(clock($0)) まで集中しましょう" } ?? "") }
-            else { asked.removeAll(); post("集中タイム終了", "おつかれさまでした") }
+            if active { post("Focus started", endsAt.map { "Stay focused until \(clock($0))." } ?? "") }
+            else { asked.removeAll(); post("Focus ended", "Nice work. Time for a break.") }
         }
         guard active else { return }
         focusSeconds += 1 // ponytail: counts ticks, drifts slightly under load; store session start/end if exact totals matter
@@ -240,7 +240,7 @@ background:linear-gradient(#1e1b4b,#0f172a);color:#cbd5e1"><div style="text-alig
         var err: NSDictionary?
         guard let res = readDia?.executeAndReturnError(&err) else {
             diaError = (err?[NSAppleScript.errorNumber] as? Int) == -1743
-                ? "システム設定 › プライバシーとセキュリティ › オートメーション で Dia を許可してください"
+                ? "Allow Deepwork to control Dia in System Settings › Privacy & Security › Automation"
                 : err?[NSAppleScript.errorMessage] as? String
             return
         }

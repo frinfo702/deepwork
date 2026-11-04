@@ -24,7 +24,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSAppleEventsUsageDescription</key><string>集中タイム中に Dia で開いているサイトを確認するために使います。</string>
+  <key>NSAppleEventsUsageDescription</key><string>Deepwork checks which site is open in Dia during focus time.</string>
 </dict></plist>
 EOF
 codesign -s - --force "$APP"

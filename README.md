@@ -1,33 +1,35 @@
 # Deepwork
 
-決めた時間だけ、許可したアプリとサイト（Dia）しか使えないようにする macOS のメニューバーアプリです。
+A macOS menu bar app that, during the hours you choose, only lets the apps and sites (in Dia) you allow through.
 
-- サイト: `docs/`（GitHub Pages: Settings › Pages › Branch `main` / folder `/docs`）
-- ダウンロード: [Releases](https://github.com/frinfo702/deepwork/releases/latest)
+- Website: https://frinfo702.github.io/deepwork/ (served from `docs/`)
+- Download: [Releases](https://github.com/frinfo702/deepwork/releases/latest)
 
-## ビルド
+## Build
 
 ```sh
-./build.sh                 # build/Deepwork.app と build/Deepwork.zip を作る
-VERSION=0.3.0 ./build.sh   # バージョンを指定する
+./build.sh                 # builds build/Deepwork.app and build/Deepwork.zip (universal)
+VERSION=0.3.0 ./build.sh   # set the version
 ```
 
-アイコンを作り直すとき:
+Regenerate the icon:
 
 ```sh
 swiftc -parse-as-library scripts/icon.swift -o /tmp/icon && /tmp/icon
 ```
 
-自己テスト:
+Self-test:
 
 ```sh
 swiftc -Onone -parse-as-library -swift-version 5 Sources/*.swift -o /tmp/dw && /tmp/dw --selftest
 ```
 
-## リリース
+## Release
 
 ```sh
-./build.sh && gh release create v0.2.0 build/Deepwork.zip
+VERSION=0.3.0 ./build.sh && gh release create v0.3.0 build/Deepwork.zip
 ```
 
-サイトのダウンロードボタンは `releases/latest/download/Deepwork.zip` を指しているので、zip のファイル名は変えないでください。
+The website's download button points to `releases/latest/download/Deepwork.zip`, so keep that file name.
+
+Background artwork on the website: Dreamblur by [@uihssn](https://x.com/uihssn).
