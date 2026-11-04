@@ -10,7 +10,8 @@ for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 -target $arch-apple-macos15.0 Sources/*.swift -o build/Deepwork-$arch
 done
 lipo -create build/Deepwork-arm64 build/Deepwork-x86_64 -output "$APP/Contents/MacOS/Deepwork" && rm build/Deepwork-*
-cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+# Assets.car = Liquid Glass icon (macOS 26+), Deepwork.icns = fallback; both built by scripts/icon/build.sh
+cp Resources/Assets.car Resources/Deepwork.icns "$APP/Contents/Resources/"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -19,7 +20,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleName</key><string>Deepwork</string>
   <key>CFBundleDisplayName</key><string>Deepwork</string>
   <key>CFBundleExecutable</key><string>Deepwork</string>
-  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIconFile</key><string>Deepwork</string>
+  <key>CFBundleIconName</key><string>Deepwork</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>

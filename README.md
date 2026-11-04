@@ -12,11 +12,18 @@ A macOS menu bar app that, during the hours you choose, only lets the apps and s
 VERSION=0.3.0 ./build.sh   # override the version (default: latest git tag)
 ```
 
-Regenerate the icon:
+## App icon
+
+The icon is a 3D scene in Blender (`scripts/icon/scene.py`, also saved as `scripts/icon/deepwork.blend`).
+It renders three layers (cloud, sun, glow) into `Resources/Deepwork.icon`, an Icon Composer document
+whose background gradient (light and dark) lives in `icon.json`.
 
 ```sh
-swiftc -parse-as-library scripts/icon.swift -o /tmp/icon && /tmp/icon
+scripts/icon/build.sh            # compile Deepwork.icon -> Resources/Assets.car, Resources/Deepwork.icns, docs/icon.png
+scripts/icon/build.sh --render   # re-render the layers in Blender first
 ```
+
+Needs Xcode 26+ and Blender. The outputs are committed, so `./build.sh` and CI need neither.
 
 Self-test:
 
