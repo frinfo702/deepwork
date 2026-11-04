@@ -214,7 +214,7 @@ footer a { text-decoration: none; } footer a:hover { text-decoration: underline;
       <div class="f"><div class="fi">🔒</div><h3>Strict mode</h3><p>Lock settings, stopping and quitting until the session ends. A promise to your future self.</p></div>
       <div class="f"><div class="fi">📊</div><h3>Today at a glance</h3><p>See how long you've focused today and how many distractions were blocked, right from the menu bar.</p></div>
       <div class="f"><div class="fi">🔔</div><h3>Start &amp; end alerts</h3><p>A gentle notification when focus begins and when it's time for a break.</p></div>
-      <div class="f"><div class="fi">☁️</div><h3>Launch at login</h3><p>Set it once and Deepwork waits in your menu bar every time your Mac starts. It's light, and it stays out of your Dock.</p></div>
+      <div class="f"><div class="fi">☁️</div><h3>Launch at login, stays updated</h3><p>Deepwork waits in your menu bar every time your Mac starts, and updates itself in one click when a new version ships.</p></div>
     </div>
   </section>
 
@@ -245,7 +245,9 @@ footer a { text-decoration: none; } footer a:hover { text-decoration: underline;
       <details><summary>Does it work with browsers other than Dia?</summary>
         <p>The site allow list only supports Dia for now. Any other browser not on your app list gets blocked entirely, so during focus time you browse in Dia, under your rules.</p></details>
       <details><summary>Does Deepwork send my data anywhere?</summary>
-        <p>No. Deepwork makes no network requests at all. Your settings and stats stay on your Mac.</p></details>
+        <p>No. The only network request Deepwork makes is checking GitHub for a new release, and you can turn that off in Settings. Your settings and stats stay on your Mac.</p></details>
+      <details><summary>How do updates work?</summary>
+        <p>Deepwork checks GitHub Releases at launch and every few hours. When a new version is out, an <b>Install</b> button shows up in the menu bar panel. One click downloads it, swaps the app and relaunches. Updates are held back while strict mode is locking a session.</p></details>
       <details><summary>It closed my terminal and editor during focus time.</summary>
         <p>Every app that isn't on your list is affected. Add the tools you work with in the Apps tab of Settings. You can pick them from the apps that are running.</p></details>
       <details><summary>What if I really need to stop?</summary>

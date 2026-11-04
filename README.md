@@ -9,7 +9,7 @@ A macOS menu bar app that, during the hours you choose, only lets the apps and s
 
 ```sh
 ./build.sh                 # builds build/Deepwork.app and build/Deepwork.zip (universal)
-VERSION=0.3.0 ./build.sh   # set the version
+VERSION=0.3.0 ./build.sh   # override the version (default: latest git tag)
 ```
 
 Regenerate the icon:
@@ -26,9 +26,13 @@ swiftc -Onone -parse-as-library -swift-version 5 Sources/*.swift -o /tmp/dw && /
 
 ## Release
 
+Push a tag. `.github/workflows/release.yml` runs the self-test, builds the universal app with that version and publishes the GitHub Release:
+
 ```sh
-VERSION=0.3.0 ./build.sh && gh release create v0.3.0 build/Deepwork.zip
+git tag v0.4.0 && git push origin v0.4.0
 ```
+
+Installed copies pick it up through the in-app updater (`Sources/Updater.swift`), which polls `releases/latest`.
 
 The website's download button points to `releases/latest/download/Deepwork.zip`, so keep that file name.
 

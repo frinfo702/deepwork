@@ -8,6 +8,7 @@ let accentGradient = LinearGradient(colors: [Color(red: 0.42, green: 0.60, blue:
 
 struct PanelView: View {
     @EnvironmentObject var s: Store
+    @EnvironmentObject var u: Updater
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -34,6 +35,16 @@ struct PanelView: View {
             }
             if let e = s.diaError {
                 Label(e, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+            }
+            if let a = u.available {
+                HStack {
+                    Label(u.busy ? (u.status ?? "Updating…") : "Version \(a.version) is available", systemImage: "arrow.down.circle.fill")
+                    Spacer()
+                    Button("Install") { Task { await u.install() } }.controlSize(.small).disabled(s.locked || u.busy)
+                }
+                .font(.caption)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(accentGradient.opacity(0.14)))
             }
             Divider()
             HStack {
@@ -145,11 +156,26 @@ struct SettingsView: View {
 
 struct GeneralTab: View {
     @EnvironmentObject var s: Store
+    @EnvironmentObject var u: Updater
     var body: some View {
         Form {
             Section("Startup") {
                 Toggle("Launch at login", isOn: $s.launchAtLogin)
                 if let e = s.loginError { Text(e).font(.caption).foregroundStyle(.red) }
+            }
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $u.auto)
+                HStack {
+                    Text("Version \(appVersion)").foregroundStyle(.secondary)
+                    Spacer()
+                    if let a = u.available {
+                        Button("Install \(a.version)") { Task { await u.install() } }
+                    } else {
+                        Button("Check Now") { Task { await u.check() } }
+                    }
+                }
+                .disabled(u.busy)
+                if let st = u.status { Text(st).font(.caption).foregroundStyle(.secondary) }
             }
             Section("Focus") {
                 Toggle(isOn: $s.strict) {
@@ -296,17 +322,18 @@ struct Row: View {
 @main
 struct DeepworkApp: App {
     @StateObject private var store = Store()
+    @StateObject private var updater = Updater()
     init() { if CommandLine.arguments.contains("--selftest") { selfTest(); exit(0) } }
     var body: some Scene {
         MenuBarExtra {
-            PanelView().environmentObject(store)
+            PanelView().environmentObject(store).environmentObject(updater)
         } label: {
             Image(systemName: store.isActive ? "cloud.fill" : "cloud")
         }
         .menuBarExtraStyle(.window)
 
         Window("Deepwork Settings", id: "settings") {
-            SettingsView().environmentObject(store)
+            SettingsView().environmentObject(store).environmentObject(updater)
         }
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)

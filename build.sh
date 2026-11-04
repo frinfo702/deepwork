@@ -2,7 +2,8 @@
 # Builds build/Deepwork.app and build/Deepwork.zip (upload the zip to a GitHub Release).
 set -e
 cd "$(dirname "$0")"
-VERSION=${VERSION:-0.2.0}
+VERSION=${VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}
+VERSION=${VERSION:-0.0.0}
 APP=build/Deepwork.app
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 for arch in arm64 x86_64; do

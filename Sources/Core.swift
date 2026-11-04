@@ -81,6 +81,7 @@ func selfTest() {
     assert(!isAllowed("https://notgithub.com", ["github.com"]))
     assert(isAllowed("dia://newtab", []))
     assert(normalizeDomain(" https://www.GitHub.com/foo ") == "github.com")
+    assert(isNewer("0.10.0", than: "0.9.1")); assert(!isNewer("0.3.0", than: "0.3.0")); assert(!isNewer("0.2.9", than: "0.3.0"))
     print("selftest ok")
 }
 
