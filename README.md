@@ -11,7 +11,8 @@ macOS 15+ · Apple Silicon & Intel
 ## Features
 
 - **Weekly schedules**: as many focus blocks as you like, including ones that cross midnight
-- **Quick focus**: start a 25, 50 or 90 minute session in one click
+- **Quick focus**: start a 25, 50 or 90 minute session in one click, then pause, resume or reset it
+- **Pomodoro**: focus rounds with short and long breaks. Lengths, the long-break interval, the number of rounds and auto-start are all yours to set
 - **App and site lists**: allow only what you need, or block only what distracts you
 - **No browser extension**: sites are filtered in [Dia](https://www.diabrowser.com/) through AppleScript
 - **Strict mode**: settings, stopping and quitting stay locked until the session ends
