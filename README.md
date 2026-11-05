@@ -36,6 +36,7 @@ Requires the Xcode Command Line Tools.
 
 ```sh
 ./build.sh   # outputs build/Deepwork.app
+bench/run.sh [base-ref]   # before/after performance table (default base: main)
 ```
 
 ## Credits

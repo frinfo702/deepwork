@@ -9,21 +9,24 @@ struct PanelView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header
-            if s.isActive {
-                activeBody
-            } else if s.isPaused || s.isBreak || s.isWaiting {
-                timerBody
-            } else {
-                idleBody
+        // Store doesn't publish the clock; this redraws countdowns while the panel is on screen.
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                if s.isActive {
+                    activeBody
+                } else if s.isPaused || s.isBreak || s.isWaiting {
+                    timerBody
+                } else {
+                    idleBody
+                }
+                if !s.isActive || !s.schedules.isEmpty {
+                    statsRow
+                }
+                alerts
+                schedules
+                footer
             }
-            if !s.isActive || !s.schedules.isEmpty {
-                statsRow
-            }
-            alerts
-            schedules
-            footer
         }
         .padding(20)
         .frame(width: 352)
@@ -540,51 +543,56 @@ struct SettingsView: View {
 
     private var railStatus: some View {
         GlassSurface(corner: 14, padding: 13) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 5) {
-                    StatusDot(active: s.isActive)
-                    Text(s.isActive ? "in focus" : "status")
-                        .font(.ui(10, .medium))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if s.locked {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            // Inside the surface: GlassSurface holds a closure, so a TimelineView around it wouldn't redraw this.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in railStatusBody }
+        }
+    }
 
-                if s.isActive, let end = s.endsAt {
-                    Text(hms(max(0, Int(end.timeIntervalSince(s.now)))))
-                        .font(.ui(28, .light))
-                        .monospacedDigit()
-                        .tracking(-0.9)
-                    if let progress = s.progress {
-                        ThinProgress(value: progress)
-                    }
-                    Text("until \(clock(end))")
-                        .font(.code(9))
+    private var railStatusBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                StatusDot(active: s.isActive)
+                Text(s.isActive ? "in focus" : "status")
+                    .font(.ui(10, .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if s.locked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                } else if s.isPaused || s.isBreak || s.isWaiting {
-                    Text(hms(s.phaseRemaining))
-                        .font(.ui(28, .light))
-                        .monospacedDigit()
-                        .tracking(-0.9)
-                        .foregroundStyle(.secondary)
-                    Text(s.isPaused ? "paused" : s.isBreak ? "break" : "up next")
-                        .font(.code(9))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("idle")
-                        .font(.ui(24, .light))
-                    Text(idleStatus)
-                        .font(.ui(9.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
             }
-        }
+
+            if s.isActive, let end = s.endsAt {
+                Text(hms(max(0, Int(end.timeIntervalSince(s.now)))))
+                    .font(.ui(28, .light))
+                    .monospacedDigit()
+                    .tracking(-0.9)
+                if let progress = s.progress {
+                    ThinProgress(value: progress)
+                }
+                Text("until \(clock(end))")
+                    .font(.code(9))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else if s.isPaused || s.isBreak || s.isWaiting {
+                Text(hms(s.phaseRemaining))
+                    .font(.ui(28, .light))
+                    .monospacedDigit()
+                    .tracking(-0.9)
+                    .foregroundStyle(.secondary)
+                Text(s.isPaused ? "paused" : s.isBreak ? "break" : "up next")
+                    .font(.code(9))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("idle")
+                    .font(.ui(24, .light))
+                Text(idleStatus)
+                    .font(.ui(9.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+    }
     }
 
     private var idleStatus: String {
@@ -1168,9 +1176,10 @@ struct AppListRow: View {
 struct RunningAppMenu: View {
     @EnvironmentObject var s: Store
     @Environment(\.colorScheme) private var scheme
+    @State private var running: [NSRunningApplication] = []
 
     private var apps: [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications.filter {
+        running.filter {
             $0.activationPolicy == .regular
                 && !s.appList.contains($0.bundleIdentifier ?? "")
                 && $0.bundleIdentifier != Bundle.main.bundleIdentifier
@@ -1209,6 +1218,7 @@ struct RunningAppMenu: View {
             .accessibilityLabel("Add a running app")
         }
         .frame(height: 28)
+        .onReceive(NSWorkspace.shared.publisher(for: \.runningApplications)) { running = $0 }
     }
 }
 
