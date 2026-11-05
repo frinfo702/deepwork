@@ -542,56 +542,57 @@ struct SettingsView: View {
     }
 
     private var railStatus: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in railStatusBody }
+        GlassSurface(corner: 14, padding: 13) {
+            // Inside the surface: GlassSurface holds a closure, so a TimelineView around it wouldn't redraw this.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in railStatusBody }
+        }
     }
 
     private var railStatusBody: some View {
-        GlassSurface(corner: 14, padding: 13) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 5) {
-                    StatusDot(active: s.isActive)
-                    Text(s.isActive ? "in focus" : "status")
-                        .font(.ui(10, .medium))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                StatusDot(active: s.isActive)
+                Text(s.isActive ? "in focus" : "status")
+                    .font(.ui(10, .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if s.locked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    if s.locked {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if s.isActive, let end = s.endsAt {
-                    Text(hms(max(0, Int(end.timeIntervalSince(s.now)))))
-                        .font(.ui(28, .light))
-                        .monospacedDigit()
-                        .tracking(-0.9)
-                    if let progress = s.progress {
-                        ThinProgress(value: progress)
-                    }
-                    Text("until \(clock(end))")
-                        .font(.code(9))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                } else if s.isPaused || s.isBreak || s.isWaiting {
-                    Text(hms(s.phaseRemaining))
-                        .font(.ui(28, .light))
-                        .monospacedDigit()
-                        .tracking(-0.9)
-                        .foregroundStyle(.secondary)
-                    Text(s.isPaused ? "paused" : s.isBreak ? "break" : "up next")
-                        .font(.code(9))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("idle")
-                        .font(.ui(24, .light))
-                    Text(idleStatus)
-                        .font(.ui(9.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
             }
-        }
+
+            if s.isActive, let end = s.endsAt {
+                Text(hms(max(0, Int(end.timeIntervalSince(s.now)))))
+                    .font(.ui(28, .light))
+                    .monospacedDigit()
+                    .tracking(-0.9)
+                if let progress = s.progress {
+                    ThinProgress(value: progress)
+                }
+                Text("until \(clock(end))")
+                    .font(.code(9))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else if s.isPaused || s.isBreak || s.isWaiting {
+                Text(hms(s.phaseRemaining))
+                    .font(.ui(28, .light))
+                    .monospacedDigit()
+                    .tracking(-0.9)
+                    .foregroundStyle(.secondary)
+                Text(s.isPaused ? "paused" : s.isBreak ? "break" : "up next")
+                    .font(.code(9))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("idle")
+                    .font(.ui(24, .light))
+                Text(idleStatus)
+                    .font(.ui(9.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+    }
     }
 
     private var idleStatus: String {
