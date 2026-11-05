@@ -120,6 +120,55 @@ struct PaperBackdrop: View {
     }
 }
 
+/// MenuBarExtra(.window) paints its own backdrop with a system corner radius that
+/// doesn't match our clip, so its corners peek out. Make the host window transparent
+/// and hide the system backdrop views, leaving only our rounded panel.
+struct ClearHostWindow: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            // Walk up past our NSHostingView; any effect/glass view out there is the system's.
+            // A sibling backdrop gets hidden; an ancestor one (it holds our content) gets its
+            // material masked inside our 16pt continuous corner instead.
+            var child: NSView = self
+            var outsideHost = false
+            while let parent = child.superview {
+                if outsideHost {
+                    for sibling in parent.subviews where sibling !== child && Self.isBackdrop(sibling) {
+                        sibling.isHidden = true
+                    }
+                    (parent as? NSVisualEffectView)?.maskImage = Self.cornerMask
+                }
+                if String(describing: type(of: child)).contains("NSHostingView") { outsideHost = true }
+                child = parent
+            }
+            window.invalidateShadow()
+        }
+
+        // Circular r=20 sits inside a continuous r=16 corner, so nothing peeks past our clip.
+        private static let cornerMask: NSImage = {
+            let r: CGFloat = 20
+            let image = NSImage(size: NSSize(width: r * 2 + 1, height: r * 2 + 1), flipped: false) { rect in
+                NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill()
+                return true
+            }
+            image.capInsets = NSEdgeInsets(top: r, left: r, bottom: r, right: r)
+            image.resizingMode = .stretch
+            return image
+        }()
+
+        private static func isBackdrop(_ view: NSView) -> Bool {
+            view is NSVisualEffectView || String(describing: type(of: view)).contains("Glass")
+        }
+    }
+}
+
 struct VisualEffectView: NSViewRepresentable {
     var material: NSVisualEffectView.Material
     var blending: NSVisualEffectView.BlendingMode

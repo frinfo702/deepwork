@@ -27,6 +27,7 @@ struct PanelView: View {
         .frame(width: 352)
         .background {
             PaperBackdrop(kind: .panel)
+            ClearHostWindow()
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
@@ -445,17 +446,7 @@ struct SettingsView: View {
 
             railStatus
                 .padding(.horizontal, 16)
-
-            HStack {
-                Text("v\(appVersion)")
-                Spacer()
-                Text("local only")
-            }
-            .font(.code(8.5))
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 22)
+                .padding(.bottom, 16)
         }
         .frame(width: 216)
         .frame(maxHeight: .infinity)
