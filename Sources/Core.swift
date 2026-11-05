@@ -186,19 +186,23 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     @Published private(set) var manualStart: Date? { didSet { ud.set(manualStart?.timeIntervalSince1970, forKey: "manualStart") } }
     /// Set while a manual timer is paused; focusUntil/manualStart stay frozen until resume.
     @Published private(set) var pausedAt: Date? { didSet { ud.set(pausedAt?.timeIntervalSince1970, forKey: "pausedAt") } }
-    @Published private(set) var focusSeconds: Int { didSet { ud.set(focusSeconds, forKey: "focusSeconds") } }
+    /// Not published: it ticks every second, and the panel's TimelineView already redraws it.
+    private(set) var focusSeconds: Int { didSet { ud.set(focusSeconds, forKey: "focusSeconds") } }
     @Published private(set) var blocked: Int { didSet { ud.set(blocked, forKey: "blocked") } }
     private var statsDay: Double { didSet { ud.set(statsDay, forKey: "statsDay") } }
 
-    @Published private(set) var now = Date()
+    /// Not published, so the Store only invalidates views on real changes;
+    /// views showing countdowns redraw from a TimelineView.
+    var now: Date { Date() }
     @Published private(set) var browserError: String?
     @Published private(set) var loginError: String?
 
     private var timer: Timer?
     private var wasActive = false
     private var asked = Set<pid_t>() // apps already handled this session; quit is asked once so save dialogs survive
-    private var bridges: [pid_t: SBApplication] = [:]
     private var agents: [pid_t: Bool] = [:]
+    private let tabs = TabGuard()
+    private var checkingTabs = false
     private var lastBrowser: NSRunningApplication?
 
     init() {
@@ -239,6 +243,7 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        timer?.tolerance = 0.2
     }
 
     // MARK: state
@@ -246,8 +251,8 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     var minuteNow: Int { let c = cal.dateComponents([.hour, .minute], from: now); return c.hour! * 60 + c.minute! }
     var activeSchedule: Schedule? {
         guard enabled else { return nil }
-        let w = cal.component(.weekday, from: now)
-        return schedules.first { $0.contains(weekday: w, minute: minuteNow) }
+        let w = cal.component(.weekday, from: now), m = minuteNow
+        return schedules.first { $0.contains(weekday: w, minute: m) }
     }
     private var phaseRunning: Bool { pausedAt == nil && (focusUntil ?? .distantPast) > now }
     var isManual: Bool { !onBreak && phaseRunning }
@@ -404,16 +409,16 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     func addCurrentSite() {
         guard let app = lastBrowser.flatMap({ $0.isTerminated ? nil : $0 })
                 ?? NSWorkspace.shared.runningApplications.first(where: { browsers[$0.bundleIdentifier ?? ""] != nil }),
-              let w = (bridge(app)?.value(forKey: "windows") as? SBElementArray)?.firstObject as? NSObject,
-              let u = (w.value(forKey: browsers[app.bundleIdentifier!]!) as? NSObject)?.value(forKey: "URL") as? String,
-              let h = URL(string: u)?.host else { return }
-        addDomain(h)
+              let tabKey = browsers[app.bundleIdentifier ?? ""] else { return }
+        let pid = app.processIdentifier
+        Task {
+            if let u = await tabs.frontURL(pid, tabKey: tabKey), let h = URL(string: u)?.host { addDomain(h) }
+        }
     }
 
     // MARK: enforcement
 
     private func tick() {
-        now = Date()
         if let f = NSWorkspace.shared.frontmostApplication, browsers[f.bundleIdentifier ?? ""] != nil { lastBrowser = f }
         let day = cal.startOfDay(for: now).timeIntervalSince1970
         if day != statsDay { statsDay = day; focusSeconds = 0; blocked = 0 }
@@ -422,9 +427,12 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         let active = isActive
         if active != wasActive {
             wasActive = active
+            objectWillChange.send() // `now` isn't published; this is what flips the menu bar icon
             if active { post("Focus started", endsAt.map { "Stay focused until \(clock($0))." } ?? "") }
             else {
                 asked.removeAll()
+                agents.removeAll() // pids get reused; re-check next block
+                Task { await tabs.forget() }
                 if isPaused { post("Focus paused", "\(hms(phaseRemaining)) left. Resume from the menu bar.") }
                 else if isBreak { post("Break time", "\(phaseRemaining / 60) min. Step away for a bit.") }
                 else if isWaiting { post("Round done", "Start your break from the menu bar.") }
@@ -435,18 +443,36 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         focusSeconds += 1 // ponytail: counts ticks, drifts slightly under load; store session start/end if exact totals matter
 
         let me = Bundle.main.bundleIdentifier
-        var tabError: String?
+        var targets: [TabTarget] = []
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             guard let id = app.bundleIdentifier, id != me, !isSpared(app) else { continue }
-            if let tabKey = browsers[id], !isAppBlocked(id, appList, appMode) { tabError = checkTabs(app, tabKey) ?? tabError; continue }
-            guard isAppBlocked(id, appList, appMode) else { continue }
+            let appBlocked = isAppBlocked(id, appList, appMode)
+            if let tabKey = browsers[id], !appBlocked {
+                targets.append(TabTarget(pid: app.processIdentifier, name: app.localizedName ?? "your browser", tabKey: tabKey))
+                continue
+            }
+            guard appBlocked else { continue }
             app.hide()
             if asked.insert(app.processIdentifier).inserted {
                 blocked += 1
                 if appAction == .quit { app.terminate() }
             }
         }
-        browserError = tabError
+        checkTabs(targets)
+    }
+
+    /// Tab checks are Apple Events (synchronous IPC), so they run on `tabs`, off the main thread.
+    /// A tick is skipped while the previous check is still out, e.g. when a browser hangs.
+    private func checkTabs(_ targets: [TabTarget]) {
+        guard !checkingTabs else { return }
+        checkingTabs = true
+        let (domains, mode, action) = (domainList, siteMode, siteAction)
+        Task {
+            let (count, error) = await tabs.enforce(targets, domains: domains, mode: mode, action: action)
+            checkingTabs = false
+            if count > 0 { blocked += count }
+            if browserError != error { browserError = error }
+        }
     }
 
     private func isSpared(_ app: NSRunningApplication) -> Bool {
@@ -456,36 +482,71 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         return agents[pid]!
     }
 
-    /// Scripting Bridge by pid, so an agent's Chrome and the user's Chrome are told apart.
-    private func bridge(_ app: NSRunningApplication) -> SBApplication? {
-        let pid = app.processIdentifier
-        if bridges[pid] == nil { bridges[pid] = SBApplication(processIdentifier: pid) }
-        return bridges[pid]
-    }
-
-    /// Replaces or closes off-list tabs; returns an error worth showing.
-    private func checkTabs(_ app: NSRunningApplication, _ tabKey: String) -> String? {
-        let target = NSAppleEventDescriptor(processIdentifier: app.processIdentifier)
-        let status = AEDeterminePermissionToAutomateTarget(target.aeDesc, AEEventClass(kAECoreSuite), AEEventID(kAEGetData), true)
-        if status == errAEEventNotPermitted {
-            return "Allow Deepwork to control \(app.localizedName ?? "your browser") in System Settings › Privacy & Security › Automation"
-        }
-        let windows = (bridge(app)?.value(forKey: "windows") as? SBElementArray) ?? []
-        for case let w as NSObject in windows.reversed() { // closing a last tab closes its window
-            guard let tab = w.value(forKey: tabKey) as? NSObject,
-                  let u = tab.value(forKey: "URL") as? String, !isAllowed(u, domainList, siteMode) else { continue }
-            if siteAction == .close { _ = tab.perform(NSSelectorFromString("close")) } else { tab.setValue(blockedURL, forKey: "URL") }
-            blocked += 1
-        }
-        return nil
-    }
-
     private func post(_ title: String, _ body: String) {
         guard notify else { return }
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+    }
+}
+
+struct TabTarget: Sendable {
+    let pid: pid_t
+    let name: String
+    let tabKey: String
+}
+
+/// Owns the Scripting Bridge objects, so the Apple Events behind tab checks never block the main thread.
+// ponytail: the IPC blocks one cooperative-pool thread (~150 ms/s with 3 browsers); give TabGuard a serial-queue executor if that starves other tasks
+actor TabGuard {
+    private var bridges: [pid_t: SBApplication] = [:]
+    private var permitted = Set<pid_t>() // ponytail: a revoked permission goes unnoticed until the block ends and forget() runs
+
+    /// Scripting Bridge by pid, so an agent's Chrome and the user's Chrome are told apart.
+    private func bridge(_ pid: pid_t) -> SBApplication? {
+        if bridges[pid] == nil {
+            let sb = SBApplication(processIdentifier: pid)
+            sb?.timeout = 30 // ticks of 1/60 s: a hung browser costs 0.5 s per event instead of the default minutes
+            bridges[pid] = sb
+        }
+        return bridges[pid]
+    }
+
+    /// Replaces or closes off-list tabs; returns how many, and an error worth showing.
+    func enforce(_ targets: [TabTarget], domains: [String], mode: ListMode, action: SiteAction) -> (blocked: Int, error: String?) {
+        var count = 0, error: String?
+        for t in targets {
+            if !permitted.contains(t.pid) {
+                let target = NSAppleEventDescriptor(processIdentifier: t.pid)
+                let status = AEDeterminePermissionToAutomateTarget(target.aeDesc, AEEventClass(kAECoreSuite), AEEventID(kAEGetData), true)
+                if status == errAEEventNotPermitted {
+                    error = "Allow Deepwork to control \(t.name) in System Settings › Privacy & Security › Automation"
+                    continue
+                }
+                if status == noErr { permitted.insert(t.pid) }
+            }
+            let windows = (bridge(t.pid)?.value(forKey: "windows") as? SBElementArray) ?? []
+            for case let w as NSObject in windows.reversed() { // closing a last tab closes its window
+                guard let tab = w.value(forKey: t.tabKey) as? NSObject,
+                      let u = tab.value(forKey: "URL") as? String, !isAllowed(u, domains, mode) else { continue }
+                if action == .close { _ = tab.perform(NSSelectorFromString("close")) } else { tab.setValue(blockedURL, forKey: "URL") }
+                count += 1
+            }
+        }
+        return (count, error)
+    }
+
+    /// URL of the front window's tab.
+    func frontURL(_ pid: pid_t, tabKey: String) -> String? {
+        let w = (bridge(pid)?.value(forKey: "windows") as? SBElementArray)?.firstObject as? NSObject
+        return (w?.value(forKey: tabKey) as? NSObject)?.value(forKey: "URL") as? String
+    }
+
+    /// Drops cached bridges and permissions; pids get reused.
+    func forget() {
+        bridges.removeAll()
+        permitted.removeAll()
     }
 }
 

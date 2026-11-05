@@ -9,21 +9,24 @@ struct PanelView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header
-            if s.isActive {
-                activeBody
-            } else if s.isPaused || s.isBreak || s.isWaiting {
-                timerBody
-            } else {
-                idleBody
+        // Store doesn't publish the clock; this redraws countdowns while the panel is on screen.
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                if s.isActive {
+                    activeBody
+                } else if s.isPaused || s.isBreak || s.isWaiting {
+                    timerBody
+                } else {
+                    idleBody
+                }
+                if !s.isActive || !s.schedules.isEmpty {
+                    statsRow
+                }
+                alerts
+                schedules
+                footer
             }
-            if !s.isActive || !s.schedules.isEmpty {
-                statsRow
-            }
-            alerts
-            schedules
-            footer
         }
         .padding(20)
         .frame(width: 352)
@@ -539,6 +542,10 @@ struct SettingsView: View {
     }
 
     private var railStatus: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in railStatusBody }
+    }
+
+    private var railStatusBody: some View {
         GlassSurface(corner: 14, padding: 13) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 5) {
@@ -1168,9 +1175,10 @@ struct AppListRow: View {
 struct RunningAppMenu: View {
     @EnvironmentObject var s: Store
     @Environment(\.colorScheme) private var scheme
+    @State private var running: [NSRunningApplication] = []
 
     private var apps: [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications.filter {
+        running.filter {
             $0.activationPolicy == .regular
                 && !s.appList.contains($0.bundleIdentifier ?? "")
                 && $0.bundleIdentifier != Bundle.main.bundleIdentifier
@@ -1209,6 +1217,7 @@ struct RunningAppMenu: View {
             .accessibilityLabel("Add a running app")
         }
         .frame(height: 28)
+        .onReceive(NSWorkspace.shared.publisher(for: \.runningApplications)) { running = $0 }
     }
 }
 

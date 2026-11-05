@@ -252,14 +252,15 @@ private enum Grain {
 
 enum ASCIIArt {
     private static let ramp = Array(" .·:cCoOS0#%@")
-
-    private static func ellipse(_ x: Double, _ y: Double,
-                                _ cx: Double, _ cy: Double,
-                                _ rx: Double, _ ry: Double) -> Double {
-        let dx = (x - cx) / rx
-        let dy = (y - cy) / ry
-        return 1 - dx * dx - dy * dy
-    }
+    private static let edge: [Character] = [".", "·", ":"]
+    private static let puffs: [(cx: Double, cy: Double, rx: Double, ry: Double)] = [
+        (28, 7.5, 11, 6.5),
+        (15, 9.5, 8, 5.0),
+        (41, 9.0, 9, 5.5),
+        (20, 5.0, 6, 4.0),
+        (36, 5.0, 6, 4.0),
+        (28, 12.0, 18, 3.2)
+    ]
 
     private static func hash(_ a: Int, _ b: Int) -> Double {
         var h = UInt64(bitPattern: Int64(a &* 374_761_393 &+ b &* 668_265_263)) ^ 0x9E37_79B9_7F4A_7C15
@@ -268,18 +269,10 @@ enum ASCIIArt {
     }
 
     /// A cloud with distinct puffs, a dense interior and loose specks of weather.
+    /// Runs on every frame of the animation, so the inner loop allocates nothing.
     static func cloud(cols: Int, rows: Int, phase: Double) -> String {
         var lines: [String] = []
         lines.reserveCapacity(rows)
-
-        let puffs: [(Double, Double, Double, Double)] = [
-            (28, 7.5, 11, 6.5),
-            (15, 9.5, 8, 5.0),
-            (41, 9.0, 9, 5.5),
-            (20, 5.0, 6, 4.0),
-            (36, 5.0, 6, 4.0),
-            (28, 12.0, 18, 3.2)
-        ]
 
         for row in 0..<rows {
             let y = Double(row) / Double(max(1, rows - 1)) * 17
@@ -288,7 +281,11 @@ enum ASCIIArt {
 
             for col in 0..<cols {
                 let x = Double(col) / Double(max(1, cols - 1)) * 55
-                var density = puffs.map { ellipse(x, y, $0.0, $0.1, $0.2, $0.3) }.max() ?? 0
+                var density = -Double.infinity
+                for p in puffs {
+                    let dx = (x - p.cx) / p.rx, dy = (y - p.cy) / p.ry
+                    density = max(density, 1 - dx * dx - dy * dy)
+                }
 
                 let noise = 0.08 * sin(0.55 * x + phase + 1.7 * sin(0.5 * y))
                     + 0.055 * sin(0.9 * y - phase * 0.55 + 0.42 * x)
@@ -307,7 +304,6 @@ enum ASCIIArt {
                         line.append(ramp[min(ramp.count - 1, max(2, level))])
                     }
                 } else if density > -0.06, weather < 0.55 {
-                    let edge: [Character] = [".", "·", ":"]
                     line.append(edge[min(2, Int(weather * 3))])
                 } else if weather > 0.992 {
                     line.append("·")
@@ -315,7 +311,8 @@ enum ASCIIArt {
                     line.append(" ")
                 }
             }
-            lines.append(line.replacingOccurrences(of: " +$", with: "", options: .regularExpression))
+            while line.last == " " { line.removeLast() }
+            lines.append(line)
         }
         return lines.joined(separator: "\n")
     }

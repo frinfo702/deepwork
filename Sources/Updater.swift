@@ -63,7 +63,7 @@ private struct Failure: LocalizedError { let errorDescription: String? }
         do {
             let (zip, _) = try await URLSession.shared.download(from: url)
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("deepwork-update-\(UUID().uuidString)")
-            try run("/usr/bin/ditto", "-x", "-k", zip.path, dir.path)
+            try await Task.detached { try Self.run("/usr/bin/ditto", "-x", "-k", zip.path, dir.path) }.value
             let new = dir.appendingPathComponent("Deepwork.app")
             guard Bundle(url: new)?.bundleIdentifier == Bundle.main.bundleIdentifier else { throw Failure(errorDescription: "The download doesn't look like Deepwork.") }
             let old = Bundle.main.bundleURL
@@ -81,7 +81,8 @@ private struct Failure: LocalizedError { let errorDescription: String? }
         }
     }
 
-    private func run(_ tool: String, _ args: String...) throws {
+    /// Blocks until the tool exits, so call it off the main actor.
+    nonisolated private static func run(_ tool: String, _ args: String...) throws {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: tool)
         p.arguments = args
