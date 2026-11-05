@@ -126,6 +126,7 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     @Published var siteAction: SiteAction { didSet { ud.set(siteAction.rawValue, forKey: "siteAction") } }
     @Published var presets: [Int] { didSet { ud.set(presets, forKey: "presets") } }
     @Published private(set) var focusUntil: Date? { didSet { ud.set(focusUntil?.timeIntervalSince1970, forKey: "focusUntil") } }
+    @Published private(set) var manualStart: Date? { didSet { ud.set(manualStart?.timeIntervalSince1970, forKey: "manualStart") } }
     @Published private(set) var focusSeconds: Int { didSet { ud.set(focusSeconds, forKey: "focusSeconds") } }
     @Published private(set) var blocked: Int { didSet { ud.set(blocked, forKey: "blocked") } }
     private var statsDay: Double { didSet { ud.set(statsDay, forKey: "statsDay") } }
@@ -146,14 +147,15 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         domains = ud.stringArray(forKey: "domains") ?? ["github.com", "google.com"]
         blockedApps = ud.stringArray(forKey: "blockedApps") ?? []
         blockedDomains = ud.stringArray(forKey: "blockedDomains") ?? ["youtube.com", "x.com"]
-        appMode = ListMode(rawValue: ud.string(forKey: "appMode") ?? "") ?? .allow
-        siteMode = ListMode(rawValue: ud.string(forKey: "siteMode") ?? "") ?? .allow
+        appMode = ListMode(rawValue: ud.string(forKey: "appMode") ?? "") ?? .block
+        siteMode = ListMode(rawValue: ud.string(forKey: "siteMode") ?? "") ?? .block
         strict = ud.bool(forKey: "strict")
         notify = ud.bool(forKey: "notify")
         appAction = AppAction(rawValue: ud.string(forKey: "appAction") ?? "") ?? .quit
         siteAction = SiteAction(rawValue: ud.string(forKey: "siteAction") ?? "") ?? .page
         presets = ud.array(forKey: "presets") as? [Int] ?? [25, 50, 90]
         focusUntil = (ud.object(forKey: "focusUntil") as? Double).map(Date.init(timeIntervalSince1970:))
+        manualStart = (ud.object(forKey: "manualStart") as? Double).map(Date.init(timeIntervalSince1970:))
         focusSeconds = ud.integer(forKey: "focusSeconds")
         blocked = ud.integer(forKey: "blocked")
         statsDay = ud.double(forKey: "statsDay")
@@ -179,6 +181,26 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     var isActive: Bool { isManual || activeSchedule != nil }
     var locked: Bool { strict && isActive }
     var nextStartDate: Date? { enabled ? nextStart(schedules, after: now) : nil }
+
+    private func length(of schedule: Schedule) -> Int {
+        schedule.start < schedule.end ? schedule.end - schedule.start : 24 * 60 - schedule.start + schedule.end
+    }
+
+    /// When the current block began, for the progress reading.
+    var sessionStart: Date? {
+        var starts: [Date] = []
+        if isManual, let manualStart { starts.append(manualStart) }
+        if let schedule = activeSchedule, let end = endsAt {
+            starts.append(end.addingTimeInterval(-TimeInterval(length(of: schedule) * 60)))
+        }
+        return starts.min()
+    }
+
+    /// 0...1, or nil when there is no measurable session.
+    var progress: Double? {
+        guard let start = sessionStart, let end = endsAt, end > start else { return nil }
+        return min(max(now.timeIntervalSince(start) / end.timeIntervalSince(start), 0), 1)
+    }
     var endsAt: Date? {
         var ends: [Date] = []
         if isManual, let f = focusUntil { ends.append(f) }
@@ -213,8 +235,15 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
 
     // MARK: actions
 
-    func startFocus(_ minutes: Int) { focusUntil = max(now, focusUntil ?? now).addingTimeInterval(TimeInterval(minutes * 60)) }
-    func stopFocus() { if !locked { focusUntil = nil } }
+    func startFocus(_ minutes: Int) {
+        if !isManual { manualStart = now }
+        focusUntil = max(now, focusUntil ?? now).addingTimeInterval(TimeInterval(minutes * 60))
+    }
+    func stopFocus() {
+        guard !locked else { return }
+        focusUntil = nil
+        manualStart = nil
+    }
 
     func addApps() {
         let p = NSOpenPanel()
@@ -242,7 +271,7 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         now = Date()
         let day = cal.startOfDay(for: now).timeIntervalSince1970
         if day != statsDay { statsDay = day; focusSeconds = 0; blocked = 0 }
-        if let f = focusUntil, f <= now { focusUntil = nil }
+        if let f = focusUntil, f <= now { focusUntil = nil; manualStart = nil }
 
         let active = isActive
         if active != wasActive {
