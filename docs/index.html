@@ -210,7 +210,7 @@ footer a { text-decoration: none; } footer a:hover { text-decoration: underline;
       <div class="f"><div class="fi">🗓</div><h3>Weekly schedules</h3><p>Set up as many blocks as you like, such as weekdays 9–12 and 13–18. Late-night sessions that cross midnight work too.</p></div>
       <div class="f"><div class="fi">⏱</div><h3>Quick focus</h3><p>Start a 25, 50 or 90 minute session in one click, and extend it the same way. Pause when you're interrupted, and resume right where you left off.</p></div>
       <div class="f"><div class="fi">🧩</div><h3>App allow list</h3><p>Apps not on your list quit as soon as they launch, or you can just hide them. Unsaved work is never thrown away.</p></div>
-      <div class="f"><div class="fi">🌐</div><h3>Site allow list</h3><p>Deepwork checks your Dia tabs every second and swaps anything not on the list for a calm block page, or closes the tab. No extension needed.</p></div>
+      <div class="f"><div class="fi">🌐</div><h3>Site allow list</h3><p>Deepwork checks your browser tabs every second and swaps anything not on the list for a calm block page, or closes the tab. No extension needed.</p></div>
       <div class="f"><div class="fi">🔒</div><h3>Strict mode</h3><p>Lock settings, stopping and quitting until the session ends. A promise to your future self.</p></div>
       <div class="f"><div class="fi">🍅</div><h3>Pomodoro, your way</h3><p>Focus rounds with short and long breaks in between. Set every length, how often the long break comes, how many rounds to run, and whether each phase starts on its own.</p></div>
       <div class="f"><div class="fi">📊</div><h3>Today at a glance</h3><p>See how long you've focused today and how many distractions were blocked, right from the menu bar. A gentle notification marks each start, break and end.</p></div>
@@ -229,7 +229,7 @@ footer a { text-decoration: none; } footer a:hover { text-decoration: underline;
         <div class="step"><h3>Download &amp; move</h3><p>Unzip <a href="https://github.com/frinfo702/deepwork/releases/latest/download/Deepwork.zip">Deepwork.zip</a> and drag <b>Deepwork.app</b> into your Applications folder.</p></div>
         <div class="step"><h3>Allow it once</h3><p>If macOS blocks it, open <b>System Settings › Privacy &amp; Security</b> and click <b>Open Anyway</b>. You can also run this in Terminal:</p>
           <pre><code>xattr -dr com.apple.quarantine /Applications/Deepwork.app</code></pre></div>
-        <div class="step"><h3>Choose what stays</h3><p>Click the ☁️ in your menu bar and open <b>Settings…</b> to set your schedules and your allowed apps and sites. The first session asks for Automation access to Dia.</p></div>
+        <div class="step"><h3>Choose what stays</h3><p>Click the ☁️ in your menu bar and open <b>Settings…</b> to set your schedules and your allowed apps and sites. The first session asks for Automation access to your browser.</p></div>
       </div>
     </section>
   </div>
@@ -241,9 +241,9 @@ footer a { text-decoration: none; } footer a:hover { text-decoration: underline;
     </div>
     <div class="faq">
       <details><summary>How does it block sites without a browser extension?</summary>
-        <p>Dia has an AppleScript interface. Every second, Deepwork reads the URL of the visible tab in each window. If the domain isn't on your list, it swaps the tab for a block page or closes it.</p></details>
-      <details><summary>Does it work with browsers other than Dia?</summary>
-        <p>The site allow list only supports Dia for now. Any other browser not on your app list gets blocked entirely, so during focus time you browse in Dia, under your rules.</p></details>
+        <p>Safari, Chrome, Arc, Dia, Edge, Brave, Vivaldi, Opera and Orion have an AppleScript interface. Every second, Deepwork reads the URL of the visible tab in each window. If the domain isn't on your list, it swaps the tab for a block page or closes it.</p></details>
+      <details><summary>Does it work with Firefox?</summary>
+        <p>Firefox has no AppleScript access to its tabs, so its sites can't be filtered. Block Firefox under Apps and browse in one of the supported browsers during focus time.</p></details>
       <details><summary>Does Deepwork send my data anywhere?</summary>
         <p>No. The only network request Deepwork makes is checking GitHub for a new release, and you can turn that off in Settings. Your settings and stats stay on your Mac.</p></details>
       <details><summary>How do updates work?</summary>

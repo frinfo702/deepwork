@@ -290,7 +290,7 @@ struct PanelView: View {
             }
         }
 
-        if let error = s.diaError {
+        if let error = s.browserError {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 9))
@@ -423,7 +423,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: "How Deepwork starts, updates and locks itself."
         case .schedules: "Weekly focus blocks. Times are local."
         case .apps: "Which apps stay open while a block runs."
-        case .sites: "Domains Dia is allowed to show."
+        case .sites: "Domains your browsers are allowed to show."
         }
     }
 }
@@ -913,11 +913,16 @@ struct GeneralTab: View {
                         .frame(width: 136)
                 }
                 SettingsRow(title: "Blocked sites",
-                            note: "In Dia, show a block page or close the tab.",
-                            divider: false) {
+                            note: "Show a block page or close the tab.") {
                     SoftSegmented(selection: $s.siteAction,
                                   options: [(.page, "Page"), (.close, "Close")])
                         .frame(width: 136)
+                }
+                SettingsRow(title: "Spare agent browsers",
+                            note: "Leave browsers marked “controlled by automated test software” alone, so AI agents and tests keep working.",
+                            divider: false) {
+                    SoftSwitch(isOn: $s.spareAgents)
+                        .accessibilityLabel("Spare agent browsers")
                 }
             }
 
@@ -1099,7 +1104,7 @@ struct AppsTab: View {
                 .padding(.top, 10)
 
                 Text(s.appMode == .allow
-                     ? "Finder and System Settings are always allowed. Remove Dia and Dia itself is blocked."
+                     ? "Finder and System Settings are always allowed. Browsers left off the list are blocked too."
                      : "Everything else is allowed. Finder and System Settings are never blocked.")
                     .font(.ui(9.5))
                     .foregroundStyle(.tertiary)
@@ -1218,7 +1223,7 @@ struct SitesTab: View {
                                   options: [(.allow, "Allow only listed"), (.block, "Block listed")])
                         .frame(width: 282)
                     Text(s.siteMode == .allow
-                         ? "Only these domains open in Dia during focus."
+                         ? "Only these domains open in your browsers during focus."
                          : "These domains are closed or replaced during focus.")
                         .font(.ui(10.5))
                         .foregroundStyle(.secondary)
@@ -1262,16 +1267,16 @@ struct SitesTab: View {
 
                 HStack(spacing: 8) {
                     Button {
-                        s.addCurrentDiaSite()
+                        s.addCurrentSite()
                     } label: {
-                        Label("Add site open in Dia", systemImage: "plus")
+                        Label("Add site open in browser", systemImage: "plus")
                     }
                     .buttonStyle(SoftButtonStyle())
                     Spacer()
                 }
                 .padding(.top, 10)
 
-                Text("Subdomains are included. Dia's own pages, like a new tab, stay available.")
+                Text("Subdomains are included. Browser pages like a new tab stay available. Works in Safari, Chrome, Arc, Dia, Edge, Brave, Vivaldi, Opera and Orion. Firefox can't be filtered, so block it under Apps.")
                     .font(.ui(9.5))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)

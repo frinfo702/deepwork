@@ -14,7 +14,8 @@ macOS 15+ · Apple Silicon & Intel
 - **Quick focus**: start a 25, 50 or 90 minute session in one click, then pause, resume or reset it
 - **Pomodoro**: focus rounds with short and long breaks. Lengths, the long-break interval, the number of rounds and auto-start are all yours to set
 - **App and site lists**: allow only what you need, or block only what distracts you
-- **No browser extension**: sites are filtered in [Dia](https://www.diabrowser.com/) through AppleScript
+- **No browser extension**: sites are filtered in Safari, Chrome, Arc, Dia, Edge, Brave, Vivaldi, Opera and Orion through AppleScript. Firefox can only be blocked as an app
+- **Agent browsers stay free**: optionally leave browsers marked "controlled by automated test software" (Puppeteer, Playwright, chrome-devtools-mcp) unrestricted, so AI agents keep working
 - **Strict mode**: settings, stopping and quitting stay locked until the session ends
 - **Today at a glance**: focused time and blocked distractions, right in the menu bar
 

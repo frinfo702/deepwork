@@ -2,8 +2,23 @@ import SwiftUI
 import AppKit
 import ServiceManagement
 import UserNotifications
+import ScriptingBridge
 
 let diaID = "company.thebrowser.dia"
+/// Browsers whose tabs Deepwork can read over Apple Events, mapped to their dictionary's tab property.
+/// Firefox has no tab scripting, so it can only be blocked as an app.
+let browsers: [String: String] = [
+    diaID: "activeTab",
+    "company.thebrowser.Browser": "activeTab", // Arc
+    "com.google.Chrome": "activeTab",
+    "org.chromium.Chromium": "activeTab",
+    "com.brave.Browser": "activeTab",
+    "com.microsoft.edgemac": "activeTab",
+    "com.vivaldi.Vivaldi": "activeTab",
+    "com.operasoftware.Opera": "activeTab",
+    "com.apple.Safari": "currentTab",
+    "com.kagi.kagimacOS": "currentTab", // Orion
+]
 let alwaysAllowed: Set<String> = ["com.apple.finder", "com.apple.systempreferences"]
 let weekOrder = [2, 3, 4, 5, 6, 7, 1] // Calendar weekday, Monday first
 let dayNames = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -53,7 +68,7 @@ func nextStart(_ ss: [Schedule], after date: Date, cal: Calendar = .current) -> 
 
 func isAllowed(_ urlString: String, _ domains: [String], _ mode: ListMode = .allow) -> Bool {
     guard let u = URL(string: urlString), let scheme = u.scheme?.lowercased(),
-          scheme == "http" || scheme == "https", let host = u.host?.lowercased() else { return true } // dia://, about:, data: etc.
+          scheme == "http" || scheme == "https", let host = u.host?.lowercased() else { return true } // chrome://, about:, data: etc.
     return domains.contains { host == $0 || host.hasSuffix("." + $0) } == (mode == .allow)
 }
 
@@ -72,6 +87,22 @@ func pomoBreak(after round: Int, short: Int, long: Int, every: Int, goal: Int) -
     if goal > 0, round >= goal { return nil }
     return round % max(every, 1) == 0 ? long : short
 }
+
+/// argv of a same-user process, read with sysctl(KERN_PROCARGS2).
+func processArgs(_ pid: pid_t) -> [String] {
+    var mib = [CTL_KERN, KERN_PROCARGS2, pid], size = 0
+    guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return [] }
+    var buf = [UInt8](repeating: 0, count: size)
+    guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return [] }
+    let argc = Int(buf.withUnsafeBytes { $0.load(as: Int32.self) })
+    // argc, exec path, NUL padding, then argv; empty argv entries are dropped (harmless for flag checks)
+    let parts = buf[4..<size].split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    return Array(parts.dropFirst().prefix(argc))
+}
+
+/// Puppeteer, Playwright and chrome-devtools-mcp start Chromium with this flag;
+/// it's what shows "controlled by automated test software".
+func isAgentBrowser(_ pid: pid_t) -> Bool { processArgs(pid).contains("--enable-automation") }
 
 func hhmm(_ m: Int) -> String { String(format: "%d:%02d", m / 60, m % 60) }
 func clock(_ d: Date) -> String { let c = Calendar.current.dateComponents([.hour, .minute], from: d); return hhmm(c.hour! * 60 + c.minute!) }
@@ -96,6 +127,7 @@ func selfTest() {
     assert(isAllowed("dia://newtab", ["youtube.com"], .block))
     assert(isAppBlocked("x", [], .allow)); assert(!isAppBlocked("x", ["x"], .allow))
     assert(isAppBlocked("x", ["x"], .block)); assert(!isAppBlocked("y", ["x"], .block)); assert(!isAppBlocked("com.apple.finder", ["com.apple.finder"], .block))
+    assert(processArgs(getpid()) == CommandLine.arguments); assert(!isAgentBrowser(getpid()))
     assert(normalizeDomain(" https://www.GitHub.com/foo ") == "github.com")
     assert(isNewer("0.10.0", than: "0.9.1")); assert(!isNewer("0.3.0", than: "0.3.0")); assert(!isNewer("0.2.9", than: "0.3.0"))
     assert(pomoBreak(after: 1, short: 5, long: 15, every: 4, goal: 0) == 5)
@@ -127,6 +159,8 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     @Published var appMode: ListMode { didSet { ud.set(appMode.rawValue, forKey: "appMode") } }
     @Published var siteMode: ListMode { didSet { ud.set(siteMode.rawValue, forKey: "siteMode") } }
     @Published var strict: Bool { didSet { ud.set(strict, forKey: "strict") } }
+    /// Leave browsers driven by automation tools (AI agents, tests) unrestricted.
+    @Published var spareAgents: Bool { didSet { ud.set(spareAgents, forKey: "spareAgents") } }
     @Published var notify: Bool {
         didSet {
             ud.set(notify, forKey: "notify")
@@ -157,13 +191,15 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     private var statsDay: Double { didSet { ud.set(statsDay, forKey: "statsDay") } }
 
     @Published private(set) var now = Date()
-    @Published private(set) var diaError: String?
+    @Published private(set) var browserError: String?
     @Published private(set) var loginError: String?
 
     private var timer: Timer?
     private var wasActive = false
     private var asked = Set<pid_t>() // apps already handled this session; quit is asked once so save dialogs survive
-    private lazy var readDia = NSAppleScript(source: "tell application id \"\(diaID)\" to get URL of active tab of every window")
+    private var bridges: [pid_t: SBApplication] = [:]
+    private var agents: [pid_t: Bool] = [:]
+    private var lastBrowser: NSRunningApplication?
 
     init() {
         enabled = ud.object(forKey: "enabled") as? Bool ?? true
@@ -175,6 +211,7 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         appMode = ListMode(rawValue: ud.string(forKey: "appMode") ?? "") ?? .block
         siteMode = ListMode(rawValue: ud.string(forKey: "siteMode") ?? "") ?? .block
         strict = ud.bool(forKey: "strict")
+        spareAgents = ud.bool(forKey: "spareAgents")
         notify = ud.bool(forKey: "notify")
         appAction = AppAction(rawValue: ud.string(forKey: "appAction") ?? "") ?? .quit
         siteAction = SiteAction(rawValue: ud.string(forKey: "siteAction") ?? "") ?? .page
@@ -363,15 +400,21 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         if !d.isEmpty, !domainList.contains(d) { domainList.append(d) }
     }
 
-    func addCurrentDiaSite() {
-        let r = NSAppleScript(source: "tell application id \"\(diaID)\" to get URL of active tab of front window")?.executeAndReturnError(nil)
-        if let u = r?.stringValue, let h = URL(string: u)?.host { addDomain(h) }
+    /// Adds the site in the front window of the browser used last.
+    func addCurrentSite() {
+        guard let app = lastBrowser.flatMap({ $0.isTerminated ? nil : $0 })
+                ?? NSWorkspace.shared.runningApplications.first(where: { browsers[$0.bundleIdentifier ?? ""] != nil }),
+              let w = (bridge(app)?.value(forKey: "windows") as? SBElementArray)?.firstObject as? NSObject,
+              let u = (w.value(forKey: browsers[app.bundleIdentifier!]!) as? NSObject)?.value(forKey: "URL") as? String,
+              let h = URL(string: u)?.host else { return }
+        addDomain(h)
     }
 
     // MARK: enforcement
 
     private func tick() {
         now = Date()
+        if let f = NSWorkspace.shared.frontmostApplication, browsers[f.bundleIdentifier ?? ""] != nil { lastBrowser = f }
         let day = cal.startOfDay(for: now).timeIntervalSince1970
         if day != statsDay { statsDay = day; focusSeconds = 0; blocked = 0 }
         if pausedAt == nil, let f = focusUntil, f <= now { phaseEnded() }
@@ -392,34 +435,49 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         focusSeconds += 1 // ponytail: counts ticks, drifts slightly under load; store session start/end if exact totals matter
 
         let me = Bundle.main.bundleIdentifier
+        var tabError: String?
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
-            guard let id = app.bundleIdentifier, id != me, isAppBlocked(id, appList, appMode) else { continue }
+            guard let id = app.bundleIdentifier, id != me, !isSpared(app) else { continue }
+            if let tabKey = browsers[id], !isAppBlocked(id, appList, appMode) { tabError = checkTabs(app, tabKey) ?? tabError; continue }
+            guard isAppBlocked(id, appList, appMode) else { continue }
             app.hide()
             if asked.insert(app.processIdentifier).inserted {
                 blocked += 1
                 if appAction == .quit { app.terminate() }
             }
         }
-        if !isAppBlocked(diaID, appList, appMode), !NSRunningApplication.runningApplications(withBundleIdentifier: diaID).isEmpty { checkDia() }
+        browserError = tabError
     }
 
-    private func checkDia() {
-        var err: NSDictionary?
-        guard let res = readDia?.executeAndReturnError(&err) else {
-            diaError = (err?[NSAppleScript.errorNumber] as? Int) == -1743
-                ? "Allow Deepwork to control Dia in System Settings › Privacy & Security › Automation"
-                : err?[NSAppleScript.errorMessage] as? String
-            return
+    private func isSpared(_ app: NSRunningApplication) -> Bool {
+        guard spareAgents else { return false }
+        let pid = app.processIdentifier
+        if agents[pid] == nil { agents[pid] = isAgentBrowser(pid) }
+        return agents[pid]!
+    }
+
+    /// Scripting Bridge by pid, so an agent's Chrome and the user's Chrome are told apart.
+    private func bridge(_ app: NSRunningApplication) -> SBApplication? {
+        let pid = app.processIdentifier
+        if bridges[pid] == nil { bridges[pid] = SBApplication(processIdentifier: pid) }
+        return bridges[pid]
+    }
+
+    /// Replaces or closes off-list tabs; returns an error worth showing.
+    private func checkTabs(_ app: NSRunningApplication, _ tabKey: String) -> String? {
+        let target = NSAppleEventDescriptor(processIdentifier: app.processIdentifier)
+        let status = AEDeterminePermissionToAutomateTarget(target.aeDesc, AEEventClass(kAECoreSuite), AEEventID(kAEGetData), true)
+        if status == errAEEventNotPermitted {
+            return "Allow Deepwork to control \(app.localizedName ?? "your browser") in System Settings › Privacy & Security › Automation"
         }
-        diaError = nil
-        let urls = res.numberOfItems == 0 ? [] : (1...res.numberOfItems).map { res.atIndex($0)?.stringValue ?? "" }
-        for (i, u) in urls.enumerated().reversed() where !isAllowed(u, domainList, siteMode) {
-            let cmd = siteAction == .close
-                ? "close active tab of window \(i + 1)"
-                : "set URL of active tab of window \(i + 1) to \"\(blockedURL)\""
-            NSAppleScript(source: "tell application id \"\(diaID)\" to \(cmd)")?.executeAndReturnError(nil)
+        let windows = (bridge(app)?.value(forKey: "windows") as? SBElementArray) ?? []
+        for case let w as NSObject in windows.reversed() { // closing a last tab closes its window
+            guard let tab = w.value(forKey: tabKey) as? NSObject,
+                  let u = tab.value(forKey: "URL") as? String, !isAllowed(u, domainList, siteMode) else { continue }
+            if siteAction == .close { _ = tab.perform(NSSelectorFromString("close")) } else { tab.setValue(blockedURL, forKey: "URL") }
             blocked += 1
         }
+        return nil
     }
 
     private func post(_ title: String, _ body: String) {
