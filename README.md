@@ -1,6 +1,6 @@
 # Deepwork
 
-A macOS menu bar app that, during the hours you choose, only lets the apps and sites (in Dia) you allow through.
+A macOS menu bar app that, during the hours you choose, blocks apps and sites (in Dia). Each can use an allow list (only listed items get through) or a block list (only listed items are blocked).
 
 - Website: https://frinfo702.github.io/deepwork/ (served from `docs/`)
 - Download: [Releases](https://github.com/frinfo702/deepwork/releases/latest)

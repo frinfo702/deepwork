@@ -185,11 +185,11 @@ struct GeneralTab: View {
                 Toggle("Notify when focus starts and ends", isOn: $s.notify)
             }
             Section("Blocking") {
-                Picker("Apps not on the list", selection: $s.appAction) {
+                Picker("Blocked apps", selection: $s.appAction) {
                     Text("Quit").tag(AppAction.quit)
                     Text("Hide").tag(AppAction.hide)
                 }
-                Picker("Sites not on the list (Dia)", selection: $s.siteAction) {
+                Picker("Blocked sites (Dia)", selection: $s.siteAction) {
                     Text("Show block page").tag(SiteAction.page)
                     Text("Close tab").tag(SiteAction.close)
                 }
@@ -249,18 +249,21 @@ struct AppsTab: View {
     @EnvironmentObject var s: Store
     var body: some View {
         Form {
+            Section { ModePicker(mode: $s.appMode) }
             Section {
-                ForEach(s.apps, id: \.self) { id in AppRow(id: id) { s.apps.removeAll { $0 == id } } }
-            } header: { Text("Allowed apps") } footer: {
-                Text("Finder and System Settings are always allowed. Remove Dia and Dia itself gets blocked.").font(.caption).foregroundStyle(.secondary)
+                ForEach(s.appList, id: \.self) { id in AppRow(id: id) { s.appList.removeAll { $0 == id } } }
+            } header: { Text(s.appMode == .allow ? "Allowed apps" : "Blocked apps") } footer: {
+                Text(s.appMode == .allow ? "Finder and System Settings are always allowed. Remove Dia and Dia itself gets blocked."
+                                         : "Everything else is allowed. Finder and System Settings are never blocked.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 Button { s.addApps() } label: { Label("Choose apps…", systemImage: "plus") }
                 Menu("Add a running app") {
                     ForEach(NSWorkspace.shared.runningApplications.filter {
-                        $0.activationPolicy == .regular && !s.apps.contains($0.bundleIdentifier ?? "") && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+                        $0.activationPolicy == .regular && !s.appList.contains($0.bundleIdentifier ?? "") && $0.bundleIdentifier != Bundle.main.bundleIdentifier
                     }, id: \.processIdentifier) { app in
-                        Button(app.localizedName ?? "?") { if let id = app.bundleIdentifier { s.apps.append(id) } }
+                        Button(app.localizedName ?? "?") { if let id = app.bundleIdentifier { s.appList.append(id) } }
                     }
                 }
             }
@@ -275,17 +278,29 @@ struct SitesTab: View {
     @State private var newDomain = ""
     var body: some View {
         Form {
+            Section { ModePicker(mode: $s.siteMode) }
             Section {
-                ForEach(s.domains, id: \.self) { d in Row(icon: Image(systemName: "globe"), title: d) { s.domains.removeAll { $0 == d } } }
+                ForEach(s.domainList, id: \.self) { d in Row(icon: Image(systemName: "globe"), title: d) { s.domainList.removeAll { $0 == d } } }
                 TextField("Add domain", text: $newDomain, prompt: Text("example.com"))
                     .onSubmit { s.addDomain(newDomain); newDomain = "" }
-            } header: { Text("Allowed sites (Dia)") } footer: {
+            } header: { Text(s.siteMode == .allow ? "Allowed sites (Dia)" : "Blocked sites (Dia)") } footer: {
                 Text("Subdomains are included. Dia's own pages, like a new tab, are always allowed.").font(.caption).foregroundStyle(.secondary)
             }
             Section { Button { s.addCurrentDiaSite() } label: { Label("Add the site open in Dia", systemImage: "plus.circle") } }
         }
         .formStyle(.grouped)
         .disabled(s.locked)
+    }
+}
+
+struct ModePicker: View {
+    @Binding var mode: ListMode
+    var body: some View {
+        Picker("Mode", selection: $mode) {
+            Text("Allow only listed").tag(ListMode.allow)
+            Text("Block listed").tag(ListMode.block)
+        }
+        .pickerStyle(.segmented)
     }
 }
 

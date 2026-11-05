@@ -26,6 +26,8 @@ struct Schedule: Codable, Identifiable, Hashable {
 
 enum AppAction: String { case hide, quit }
 enum SiteAction: String { case page, close }
+/// allow = only listed items get through; block = only listed items are blocked.
+enum ListMode: String { case allow, block }
 
 func daysLabel(_ d: Set<Int>) -> String {
     switch d {
@@ -49,10 +51,14 @@ func nextStart(_ ss: [Schedule], after date: Date, cal: Calendar = .current) -> 
     return nil
 }
 
-func isAllowed(_ urlString: String, _ domains: [String]) -> Bool {
+func isAllowed(_ urlString: String, _ domains: [String], _ mode: ListMode = .allow) -> Bool {
     guard let u = URL(string: urlString), let scheme = u.scheme?.lowercased(),
           scheme == "http" || scheme == "https", let host = u.host?.lowercased() else { return true } // dia://, about:, data: etc.
-    return domains.contains { host == $0 || host.hasSuffix("." + $0) }
+    return domains.contains { host == $0 || host.hasSuffix("." + $0) } == (mode == .allow)
+}
+
+func isAppBlocked(_ id: String, _ list: [String], _ mode: ListMode) -> Bool {
+    !alwaysAllowed.contains(id) && list.contains(id) != (mode == .allow)
 }
 
 func normalizeDomain(_ s: String) -> String {
@@ -80,6 +86,10 @@ func selfTest() {
     assert(isAllowed("https://docs.github.com/x", ["github.com"]))
     assert(!isAllowed("https://notgithub.com", ["github.com"]))
     assert(isAllowed("dia://newtab", []))
+    assert(!isAllowed("https://www.youtube.com", ["youtube.com"], .block)); assert(isAllowed("https://github.com", ["youtube.com"], .block))
+    assert(isAllowed("dia://newtab", ["youtube.com"], .block))
+    assert(isAppBlocked("x", [], .allow)); assert(!isAppBlocked("x", ["x"], .allow))
+    assert(isAppBlocked("x", ["x"], .block)); assert(!isAppBlocked("y", ["x"], .block)); assert(!isAppBlocked("com.apple.finder", ["com.apple.finder"], .block))
     assert(normalizeDomain(" https://www.GitHub.com/foo ") == "github.com")
     assert(isNewer("0.10.0", than: "0.9.1")); assert(!isNewer("0.3.0", than: "0.3.0")); assert(!isNewer("0.2.9", than: "0.3.0"))
     print("selftest ok")
@@ -88,7 +98,7 @@ func selfTest() {
 let blockedURL = "data:text/html;charset=utf-8," + """
 <html><head><title>Blocked by Deepwork</title></head><body style="margin:0;height:100vh;display:grid;place-items:center;font:600 22px -apple-system;\
 background:linear-gradient(#1e1b4b,#0f172a);color:#cbd5e1"><div style="text-align:center"><div style="font-size:64px">☁️</div>\
-Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">This site isn't on your allow list</div></div></body></html>
+Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">This site is blocked during focus time</div></div></body></html>
 """.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
 
 // MARK: - Store + enforcement
@@ -101,6 +111,10 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     @Published var schedules: [Schedule] { didSet { ud.set(try? JSONEncoder().encode(schedules), forKey: "schedules") } }
     @Published var apps: [String] { didSet { ud.set(apps, forKey: "apps") } }
     @Published var domains: [String] { didSet { ud.set(domains, forKey: "domains") } }
+    @Published var blockedApps: [String] { didSet { ud.set(blockedApps, forKey: "blockedApps") } }
+    @Published var blockedDomains: [String] { didSet { ud.set(blockedDomains, forKey: "blockedDomains") } }
+    @Published var appMode: ListMode { didSet { ud.set(appMode.rawValue, forKey: "appMode") } }
+    @Published var siteMode: ListMode { didSet { ud.set(siteMode.rawValue, forKey: "siteMode") } }
     @Published var strict: Bool { didSet { ud.set(strict, forKey: "strict") } }
     @Published var notify: Bool {
         didSet {
@@ -130,6 +144,10 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         schedules = (ud.data(forKey: "schedules")).flatMap { try? JSONDecoder().decode([Schedule].self, from: $0) } ?? [Schedule()]
         apps = ud.stringArray(forKey: "apps") ?? [diaID]
         domains = ud.stringArray(forKey: "domains") ?? ["github.com", "google.com"]
+        blockedApps = ud.stringArray(forKey: "blockedApps") ?? []
+        blockedDomains = ud.stringArray(forKey: "blockedDomains") ?? ["youtube.com", "x.com"]
+        appMode = ListMode(rawValue: ud.string(forKey: "appMode") ?? "") ?? .allow
+        siteMode = ListMode(rawValue: ud.string(forKey: "siteMode") ?? "") ?? .allow
         strict = ud.bool(forKey: "strict")
         notify = ud.bool(forKey: "notify")
         appAction = AppAction(rawValue: ud.string(forKey: "appAction") ?? "") ?? .quit
@@ -172,6 +190,16 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         return ends.max()
     }
 
+    /// The list the current mode reads and edits; each mode keeps its own list.
+    var appList: [String] {
+        get { appMode == .allow ? apps : blockedApps }
+        set { if appMode == .allow { apps = newValue } else { blockedApps = newValue } }
+    }
+    var domainList: [String] {
+        get { siteMode == .allow ? domains : blockedDomains }
+        set { if siteMode == .allow { domains = newValue } else { blockedDomains = newValue } }
+    }
+
     var launchAtLogin: Bool {
         get { SMAppService.mainApp.status == .enabled }
         set {
@@ -195,12 +223,12 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         p.directoryURL = URL(fileURLWithPath: "/Applications")
         NSApp.activate()
         guard p.runModal() == .OK else { return }
-        for id in p.urls.compactMap({ Bundle(url: $0)?.bundleIdentifier }) where !apps.contains(id) { apps.append(id) }
+        for id in p.urls.compactMap({ Bundle(url: $0)?.bundleIdentifier }) where !appList.contains(id) { appList.append(id) }
     }
 
     func addDomain(_ raw: String) {
         let d = normalizeDomain(raw)
-        if !d.isEmpty, !domains.contains(d) { domains.append(d) }
+        if !d.isEmpty, !domainList.contains(d) { domainList.append(d) }
     }
 
     func addCurrentDiaSite() {
@@ -227,14 +255,14 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
 
         let me = Bundle.main.bundleIdentifier
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
-            guard let id = app.bundleIdentifier, id != me, !alwaysAllowed.contains(id), !apps.contains(id) else { continue }
+            guard let id = app.bundleIdentifier, id != me, isAppBlocked(id, appList, appMode) else { continue }
             app.hide()
             if asked.insert(app.processIdentifier).inserted {
                 blocked += 1
                 if appAction == .quit { app.terminate() }
             }
         }
-        if apps.contains(diaID), !NSRunningApplication.runningApplications(withBundleIdentifier: diaID).isEmpty { checkDia() }
+        if !isAppBlocked(diaID, appList, appMode), !NSRunningApplication.runningApplications(withBundleIdentifier: diaID).isEmpty { checkDia() }
     }
 
     private func checkDia() {
@@ -247,7 +275,7 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         }
         diaError = nil
         let urls = res.numberOfItems == 0 ? [] : (1...res.numberOfItems).map { res.atIndex($0)?.stringValue ?? "" }
-        for (i, u) in urls.enumerated().reversed() where !isAllowed(u, domains) {
+        for (i, u) in urls.enumerated().reversed() where !isAllowed(u, domainList, siteMode) {
             let cmd = siteAction == .close
                 ? "close active tab of window \(i + 1)"
                 : "set URL of active tab of window \(i + 1) to \"\(blockedURL)\""
