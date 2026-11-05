@@ -13,6 +13,8 @@ struct PanelView: View {
             header
             if s.isActive {
                 activeBody
+            } else if s.isPaused || s.isBreak || s.isWaiting {
+                timerBody
             } else {
                 idleBody
             }
@@ -75,6 +77,9 @@ struct PanelView: View {
         if s.isActive, let end = s.endsAt {
             return "focusing · until \(clock(end))"
         }
+        if s.isPaused { return "paused · \(hms(s.phaseRemaining)) left" }
+        if s.isBreak, let end = s.focusUntil { return "break · until \(clock(end))" }
+        if s.isWaiting { return s.onBreak ? "pomodoro · break up next" : "pomodoro · focus up next" }
         guard s.enabled else { return "schedules off" }
         guard let next = s.nextStartDate else { return "nothing scheduled" }
         let day = relativeDay(next)
@@ -93,7 +98,7 @@ struct PanelView: View {
                             .monospacedDigit()
                             .tracking(-1.4)
                     }
-                    Text(s.isManual ? "until \(s.endsAt.map(clock) ?? "") · manual" : "until \(s.endsAt.map(clock) ?? "")")
+                    Text(s.isManual ? "until \(s.endsAt.map(clock) ?? "") · \(pomoLabel ?? "manual")" : "until \(s.endsAt.map(clock) ?? "")")
                         .font(.ui(10.5))
                         .foregroundStyle(.secondary)
                 }
@@ -105,9 +110,8 @@ struct PanelView: View {
                     }
                     .foregroundStyle(.secondary)
                     .padding(.top, 8)
-                } else if s.isManual {
-                    Button("Stop") { s.stopFocus() }
-                        .buttonStyle(SoftButtonStyle())
+                } else if s.isManual || s.isPaused {
+                    timerControls
                         .padding(.top, 4)
                 }
             }
@@ -128,6 +132,65 @@ struct PanelView: View {
                 }
             }
         }
+    }
+
+    /// "round 2 of 4" while a pomodoro run is going; counts the round in progress or just finished.
+    private var pomoLabel: String? {
+        guard let done = s.pomoRound else { return nil }
+        let round = s.onBreak ? done : done + 1
+        return s.pomoGoal > 0 ? "round \(round) of \(s.pomoGoal)" : "round \(round)"
+    }
+
+    private var timerControls: some View {
+        HStack(spacing: 6) {
+            if s.isWaiting {
+                Button("Start") { s.nextPhase() }
+                    .buttonStyle(SoftButtonStyle(kind: .strong))
+            } else if s.isPaused {
+                Button("Resume") { s.resumeFocus() }
+            } else {
+                Button("Pause") { s.pauseFocus() }
+            }
+            if s.onBreak {
+                Button("Skip") { s.skipBreak() }
+                    .help("Skip the break and start focusing")
+            }
+            Button("Reset") { s.stopFocus() }
+        }
+        .buttonStyle(SoftButtonStyle())
+    }
+
+    // MARK: paused / break / between rounds
+
+    private var timerBody: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(hms(s.phaseRemaining))
+                        .font(.ui(38, .light))
+                        .monospacedDigit()
+                        .tracking(-1.4)
+                        .foregroundStyle(s.isBreak ? .primary : .secondary)
+                    Text(timerCaption)
+                        .font(.ui(10.5))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                timerControls
+                    .padding(.top, 4)
+            }
+            if !s.isWaiting, let progress = s.phaseProgress {
+                ThinProgress(value: progress)
+                    .opacity(s.isPaused ? 0.5 : 1)
+            }
+        }
+    }
+
+    private var timerCaption: String {
+        let kind = s.onBreak ? "break" : (pomoLabel ?? "manual")
+        if s.isWaiting { return s.onBreak ? "\(pomoLabel ?? "") done · break up next" : "\(pomoLabel ?? "") up next" }
+        if s.isPaused { return "paused · \(kind)" }
+        return "until \(s.focusUntil.map(clock) ?? "") · \(pomoLabel.map { "break after \($0)" } ?? "break")"
     }
 
     // MARK: idle
@@ -162,6 +225,20 @@ struct PanelView: View {
                     .fill(Ink.glassFill(scheme))
                     .overlay(shape.strokeBorder(Ink.glassEdge(scheme), lineWidth: 0.8))
                     .shadow(color: .black.opacity(scheme == .dark ? 0.22 : 0.05), radius: 10, y: 4)
+            }
+
+            HStack(spacing: 8) {
+                Text("pomodoro")
+                    .font(.ui(10.5))
+                    .foregroundStyle(.secondary)
+                Text("\(s.pomoFocus) / \(s.pomoShort) min" + (s.pomoGoal > 0 ? " · ×\(s.pomoGoal)" : ""))
+                    .font(.code(9.5))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button("Start") {
+                    withAnimation(.easeOut(duration: 0.2)) { s.startPomodoro() }
+                }
+                .buttonStyle(SoftButtonStyle())
             }
         }
     }
@@ -489,6 +566,15 @@ struct SettingsView: View {
                         .font(.code(9))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                } else if s.isPaused || s.isBreak || s.isWaiting {
+                    Text(hms(s.phaseRemaining))
+                        .font(.ui(28, .light))
+                        .monospacedDigit()
+                        .tracking(-0.9)
+                        .foregroundStyle(.secondary)
+                    Text(s.isPaused ? "paused" : s.isBreak ? "break" : "up next")
+                        .font(.code(9))
+                        .foregroundStyle(.secondary)
                 } else {
                     Text("idle")
                         .font(.ui(24, .light))
@@ -842,6 +928,32 @@ struct GeneralTab: View {
                                 divider: index < s.presets.count - 1) {
                         SoftStepper(value: $s.presets[index], range: 5...240, step: 5)
                     }
+                }
+            }
+
+            SettingsSection(title: "Pomodoro", note: "minutes") {
+                SettingsRow(title: "Focus", note: "One round of blocking.") {
+                    SoftStepper(value: $s.pomoFocus, range: 5...180, step: 5)
+                }
+                SettingsRow(title: "Short break", note: "Between rounds. Nothing is blocked.") {
+                    SoftStepper(value: $s.pomoShort, range: 1...60, step: 1)
+                }
+                SettingsRow(title: "Long break", note: "Instead of a short one, every few rounds.") {
+                    SoftStepper(value: $s.pomoLong, range: 5...90, step: 5)
+                }
+                SettingsRow(title: "Long break every", note: "Rounds between long breaks.") {
+                    SoftStepper(value: $s.pomoEvery, range: 1...12, step: 1)
+                }
+                SettingsRow(title: "Rounds", note: s.pomoGoal == 0 ? "Keeps going until you reset." : "The run ends after this many rounds. 0 = no limit.") {
+                    SoftStepper(value: $s.pomoGoal, range: 0...16, step: 1)
+                }
+                SettingsRow(title: "Start breaks automatically", note: "Otherwise wait for Start in the menu bar.") {
+                    SoftSwitch(isOn: $s.pomoAutoBreak)
+                        .accessibilityLabel("Start breaks automatically")
+                }
+                SettingsRow(title: "Start rounds automatically", note: "Begin the next focus round when a break ends.", divider: false) {
+                    SoftSwitch(isOn: $s.pomoAutoFocus)
+                        .accessibilityLabel("Start rounds automatically")
                 }
             }
         }

@@ -67,6 +67,12 @@ func normalizeDomain(_ s: String) -> String {
     return d.hasPrefix("www.") ? String(d.dropFirst(4)) : d
 }
 
+/// Break minutes after `round` finished focus rounds, or nil when the run is complete (goal 0 = endless).
+func pomoBreak(after round: Int, short: Int, long: Int, every: Int, goal: Int) -> Int? {
+    if goal > 0, round >= goal { return nil }
+    return round % max(every, 1) == 0 ? long : short
+}
+
 func hhmm(_ m: Int) -> String { String(format: "%d:%02d", m / 60, m % 60) }
 func clock(_ d: Date) -> String { let c = Calendar.current.dateComponents([.hour, .minute], from: d); return hhmm(c.hour! * 60 + c.minute!) }
 func duration(_ sec: Int) -> String { sec >= 3600 ? "\(sec / 3600)h \(sec % 3600 / 60)m" : "\(sec / 60)m" }
@@ -92,6 +98,11 @@ func selfTest() {
     assert(isAppBlocked("x", ["x"], .block)); assert(!isAppBlocked("y", ["x"], .block)); assert(!isAppBlocked("com.apple.finder", ["com.apple.finder"], .block))
     assert(normalizeDomain(" https://www.GitHub.com/foo ") == "github.com")
     assert(isNewer("0.10.0", than: "0.9.1")); assert(!isNewer("0.3.0", than: "0.3.0")); assert(!isNewer("0.2.9", than: "0.3.0"))
+    assert(pomoBreak(after: 1, short: 5, long: 15, every: 4, goal: 0) == 5)
+    assert(pomoBreak(after: 4, short: 5, long: 15, every: 4, goal: 0) == 15)
+    assert(pomoBreak(after: 8, short: 5, long: 15, every: 4, goal: 0) == 15)
+    assert(pomoBreak(after: 3, short: 5, long: 15, every: 4, goal: 3) == nil)
+    assert(pomoBreak(after: 2, short: 5, long: 15, every: 2, goal: 3) == 15)
     print("selftest ok")
 }
 
@@ -125,8 +136,22 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     @Published var appAction: AppAction { didSet { ud.set(appAction.rawValue, forKey: "appAction") } }
     @Published var siteAction: SiteAction { didSet { ud.set(siteAction.rawValue, forKey: "siteAction") } }
     @Published var presets: [Int] { didSet { ud.set(presets, forKey: "presets") } }
+    @Published var pomoFocus: Int { didSet { ud.set(pomoFocus, forKey: "pomoFocus") } }
+    @Published var pomoShort: Int { didSet { ud.set(pomoShort, forKey: "pomoShort") } }
+    @Published var pomoLong: Int { didSet { ud.set(pomoLong, forKey: "pomoLong") } }
+    @Published var pomoEvery: Int { didSet { ud.set(pomoEvery, forKey: "pomoEvery") } }
+    @Published var pomoGoal: Int { didSet { ud.set(pomoGoal, forKey: "pomoGoal") } }
+    @Published var pomoAutoBreak: Bool { didSet { ud.set(pomoAutoBreak, forKey: "pomoAutoBreak") } }
+    @Published var pomoAutoFocus: Bool { didSet { ud.set(pomoAutoFocus, forKey: "pomoAutoFocus") } }
+    /// Finished focus rounds in the current pomodoro run; nil when no run is going.
+    @Published private(set) var pomoRound: Int? { didSet { ud.set(pomoRound, forKey: "pomoRound") } }
+    /// The current (or, while waiting, upcoming) pomodoro phase is a break.
+    @Published private(set) var onBreak: Bool { didSet { ud.set(onBreak, forKey: "onBreak") } }
+    /// End of the current manual phase: a focus block, or a break when `onBreak`.
     @Published private(set) var focusUntil: Date? { didSet { ud.set(focusUntil?.timeIntervalSince1970, forKey: "focusUntil") } }
     @Published private(set) var manualStart: Date? { didSet { ud.set(manualStart?.timeIntervalSince1970, forKey: "manualStart") } }
+    /// Set while a manual timer is paused; focusUntil/manualStart stay frozen until resume.
+    @Published private(set) var pausedAt: Date? { didSet { ud.set(pausedAt?.timeIntervalSince1970, forKey: "pausedAt") } }
     @Published private(set) var focusSeconds: Int { didSet { ud.set(focusSeconds, forKey: "focusSeconds") } }
     @Published private(set) var blocked: Int { didSet { ud.set(blocked, forKey: "blocked") } }
     private var statsDay: Double { didSet { ud.set(statsDay, forKey: "statsDay") } }
@@ -154,8 +179,18 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         appAction = AppAction(rawValue: ud.string(forKey: "appAction") ?? "") ?? .quit
         siteAction = SiteAction(rawValue: ud.string(forKey: "siteAction") ?? "") ?? .page
         presets = ud.array(forKey: "presets") as? [Int] ?? [25, 50, 90]
+        pomoFocus = ud.object(forKey: "pomoFocus") as? Int ?? 25
+        pomoShort = ud.object(forKey: "pomoShort") as? Int ?? 5
+        pomoLong = ud.object(forKey: "pomoLong") as? Int ?? 15
+        pomoEvery = ud.object(forKey: "pomoEvery") as? Int ?? 4
+        pomoGoal = ud.object(forKey: "pomoGoal") as? Int ?? 4
+        pomoAutoBreak = ud.object(forKey: "pomoAutoBreak") as? Bool ?? true
+        pomoAutoFocus = ud.object(forKey: "pomoAutoFocus") as? Bool ?? false
+        pomoRound = ud.object(forKey: "pomoRound") as? Int
+        onBreak = ud.bool(forKey: "onBreak")
         focusUntil = (ud.object(forKey: "focusUntil") as? Double).map(Date.init(timeIntervalSince1970:))
         manualStart = (ud.object(forKey: "manualStart") as? Double).map(Date.init(timeIntervalSince1970:))
+        pausedAt = (ud.object(forKey: "pausedAt") as? Double).map(Date.init(timeIntervalSince1970:))
         focusSeconds = ud.integer(forKey: "focusSeconds")
         blocked = ud.integer(forKey: "blocked")
         statsDay = ud.double(forKey: "statsDay")
@@ -177,7 +212,24 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         let w = cal.component(.weekday, from: now)
         return schedules.first { $0.contains(weekday: w, minute: minuteNow) }
     }
-    var isManual: Bool { (focusUntil ?? .distantPast) > now }
+    private var phaseRunning: Bool { pausedAt == nil && (focusUntil ?? .distantPast) > now }
+    var isManual: Bool { !onBreak && phaseRunning }
+    var isBreak: Bool { onBreak && phaseRunning }
+    var isPaused: Bool { pausedAt != nil }
+    /// A pomodoro run between phases, waiting for the user to start the next one.
+    var isWaiting: Bool { pomoRound != nil && focusUntil == nil }
+    var nextPhaseMinutes: Int {
+        onBreak ? pomoBreak(after: pomoRound ?? 0, short: pomoShort, long: pomoLong, every: pomoEvery, goal: 0)! : pomoFocus
+    }
+    /// Seconds left in the manual phase (frozen while paused), or the next phase's length while waiting.
+    var phaseRemaining: Int {
+        guard let f = focusUntil else { return isWaiting ? nextPhaseMinutes * 60 : 0 }
+        return max(0, Int(f.timeIntervalSince(pausedAt ?? now)))
+    }
+    var phaseProgress: Double? {
+        guard let f = focusUntil, let start = manualStart, f > start else { return nil }
+        return min(max((pausedAt ?? now).timeIntervalSince(start) / f.timeIntervalSince(start), 0), 1)
+    }
     var isActive: Bool { isManual || activeSchedule != nil }
     var locked: Bool { strict && isActive }
     var nextStartDate: Date? { enabled ? nextStart(schedules, after: now) : nil }
@@ -236,13 +288,64 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     // MARK: actions
 
     func startFocus(_ minutes: Int) {
+        resumeFocus()
         if !isManual { manualStart = now }
         focusUntil = max(now, focusUntil ?? now).addingTimeInterval(TimeInterval(minutes * 60))
     }
+    func startPomodoro() {
+        guard !locked else { return }
+        pomoRound = 0
+        onBreak = false
+        begin(pomoFocus)
+    }
+    /// Starts whichever phase a waiting pomodoro run is up to.
+    func nextPhase() { if isWaiting { begin(nextPhaseMinutes) } }
+    func skipBreak() {
+        guard onBreak, pomoRound != nil else { return }
+        onBreak = false
+        begin(pomoFocus)
+    }
+    private func begin(_ minutes: Int) {
+        pausedAt = nil
+        manualStart = now
+        focusUntil = now.addingTimeInterval(TimeInterval(minutes * 60))
+    }
+
+    func pauseFocus() {
+        guard isManual || isBreak, !locked else { return }
+        pausedAt = now
+    }
+    func resumeFocus() {
+        guard let p = pausedAt else { return }
+        let shift = now.timeIntervalSince(p)
+        focusUntil = focusUntil?.addingTimeInterval(shift)
+        manualStart = manualStart?.addingTimeInterval(shift)
+        pausedAt = nil
+    }
+    /// Discards the manual timer and any pomodoro run, running or paused.
     func stopFocus() {
         guard !locked else { return }
         focusUntil = nil
         manualStart = nil
+        pausedAt = nil
+        pomoRound = nil
+        onBreak = false
+    }
+
+    private func phaseEnded() {
+        focusUntil = nil
+        manualStart = nil
+        guard let round = pomoRound else { return }
+        if onBreak {
+            onBreak = false
+            if pomoAutoFocus { begin(pomoFocus) } else { post("Break over", "Start the next round from the menu bar.") }
+        } else if let minutes = pomoBreak(after: round + 1, short: pomoShort, long: pomoLong, every: pomoEvery, goal: pomoGoal) {
+            pomoRound = round + 1
+            onBreak = true
+            if pomoAutoBreak { begin(minutes) }
+        } else {
+            pomoRound = nil
+        }
     }
 
     func addApps() {
@@ -271,13 +374,19 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         now = Date()
         let day = cal.startOfDay(for: now).timeIntervalSince1970
         if day != statsDay { statsDay = day; focusSeconds = 0; blocked = 0 }
-        if let f = focusUntil, f <= now { focusUntil = nil; manualStart = nil }
+        if pausedAt == nil, let f = focusUntil, f <= now { phaseEnded() }
 
         let active = isActive
         if active != wasActive {
             wasActive = active
             if active { post("Focus started", endsAt.map { "Stay focused until \(clock($0))." } ?? "") }
-            else { asked.removeAll(); post("Focus ended", "Nice work. Time for a break.") }
+            else {
+                asked.removeAll()
+                if isPaused { post("Focus paused", "\(hms(phaseRemaining)) left. Resume from the menu bar.") }
+                else if isBreak { post("Break time", "\(phaseRemaining / 60) min. Step away for a bit.") }
+                else if isWaiting { post("Round done", "Start your break from the menu bar.") }
+                else { post("Focus ended", "Nice work. Time for a break.") }
+            }
         }
         guard active else { return }
         focusSeconds += 1 // ponytail: counts ticks, drifts slightly under load; store session start/end if exact totals matter
