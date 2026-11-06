@@ -121,8 +121,8 @@ struct PaperBackdrop: View {
 }
 
 /// MenuBarExtra(.window) paints its own backdrop with a system corner radius that
-/// doesn't match our clip, so its corners peek out. Make the host window transparent
-/// and hide the system backdrop views, leaving only our rounded panel.
+/// doesn't match our clip, so its corners peek out. Make the host window transparent,
+/// hide the system backdrop views and its shadow, leaving only our rounded panel.
 struct ClearHostWindow: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { Probe() }
     func updateNSView(_ view: NSView, context: Context) {}
@@ -148,7 +148,9 @@ struct ClearHostWindow: NSViewRepresentable {
                 if String(describing: type(of: child)).contains("NSHostingView") { outsideHost = true }
                 child = parent
             }
-            window.invalidateShadow()
+            // The window-server shadow draws a dark rim on the system's corner, not our clip,
+            // so it shows up as a second, differently shaped outline around the panel.
+            window.hasShadow = false
         }
 
         // Circular r=20 sits inside a continuous r=16 corner, so nothing peeks past our clip.
