@@ -66,10 +66,21 @@ func nextStart(_ ss: [Schedule], after date: Date, cal: Calendar = .current) -> 
     return nil
 }
 
-func isAllowed(_ urlString: String, _ domains: [String], _ mode: ListMode = .allow) -> Bool {
+/// `paths` are always-allowed pages ("github.com/me", "youtube.com/watch?v=id") that win over the domain list in either mode.
+func isAllowed(_ urlString: String, _ domains: [String], _ mode: ListMode = .allow, paths: [String] = []) -> Bool {
     guard let u = URL(string: urlString), let scheme = u.scheme?.lowercased(),
           scheme == "http" || scheme == "https", let host = u.host?.lowercased() else { return true } // chrome://, about:, data: etc.
-    return domains.contains { host == $0 || host.hasSuffix("." + $0) } == (mode == .allow)
+    let onHost = { (d: String) in host == d || host.hasSuffix("." + d) }
+    let target = u.path + (u.query.map { "?" + $0 } ?? "")
+    for entry in paths {
+        let slash = entry.firstIndex(of: "/") ?? entry.endIndex
+        let prefix = String(entry[slash...])
+        // A prefix only counts on a boundary, so "/me" covers "/me/repo" and "/me?tab=1" but not "/meow".
+        guard onHost(String(entry[..<slash])), target.hasPrefix(prefix) else { continue }
+        let next = target.dropFirst(prefix.count).first
+        if next == nil || prefix.hasSuffix("/") || "/?&#".contains(next!) { return true }
+    }
+    return domains.contains(where: onHost) == (mode == .allow)
 }
 
 func isAppBlocked(_ id: String, _ list: [String], _ mode: ListMode) -> Bool {
@@ -80,6 +91,16 @@ func normalizeDomain(_ s: String) -> String {
     var d = s.trimmingCharacters(in: .whitespaces).lowercased()
     if let h = URL(string: d.contains("://") ? d : "https://" + d)?.host { d = h }
     return d.hasPrefix("www.") ? String(d.dropFirst(4)) : d
+}
+
+/// "https://www.GitHub.com/me/" -> "github.com/me": host lowercased, path and query kept as typed.
+func normalizePath(_ s: String) -> String {
+    let raw = s.trimmingCharacters(in: .whitespaces)
+    guard let u = URL(string: raw.contains("://") ? raw : "https://" + raw), let h = u.host else { return "" }
+    let host = normalizeDomain(h)
+    var rest = u.path + (u.query.map { "?" + $0 } ?? "")
+    while rest.hasSuffix("/") { rest.removeLast() }
+    return host + rest
 }
 
 /// Break minutes after `round` finished focus rounds, or nil when the run is complete (goal 0 = endless).
@@ -129,6 +150,13 @@ func selfTest() {
     assert(isAppBlocked("x", ["x"], .block)); assert(!isAppBlocked("y", ["x"], .block)); assert(!isAppBlocked("com.apple.finder", ["com.apple.finder"], .block))
     assert(processArgs(getpid()) == CommandLine.arguments); assert(!isAgentBrowser(getpid()))
     assert(normalizeDomain(" https://www.GitHub.com/foo ") == "github.com")
+    assert(normalizePath(" https://www.GitHub.com/Me/ ") == "github.com/Me"); assert(normalizePath("youtube.com/watch?v=x") == "youtube.com/watch?v=x")
+    let yt = ["youtube.com"], ok = ["youtube.com/watch?v=abc", "github.com/me"]
+    assert(isAllowed("https://www.youtube.com/watch?v=abc&t=9", yt, .block, paths: ok))
+    assert(!isAllowed("https://www.youtube.com/watch?v=abcd", yt, .block, paths: ok))
+    assert(!isAllowed("https://youtube.com/", yt, .block, paths: ok))
+    assert(isAllowed("https://github.com/me/repo", [], .allow, paths: ok)); assert(isAllowed("https://github.com/me", [], .allow, paths: ok))
+    assert(!isAllowed("https://github.com/meow", [], .allow, paths: ok)); assert(!isAllowed("https://github.com/", [], .allow, paths: ok))
     assert(isNewer("0.10.0", than: "0.9.1")); assert(!isNewer("0.3.0", than: "0.3.0")); assert(!isNewer("0.2.9", than: "0.3.0"))
     assert(pomoBreak(after: 1, short: 5, long: 15, every: 4, goal: 0) == 5)
     assert(pomoBreak(after: 4, short: 5, long: 15, every: 4, goal: 0) == 15)
@@ -156,6 +184,8 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     @Published var domains: [String] { didSet { ud.set(domains, forKey: "domains") } }
     @Published var blockedApps: [String] { didSet { ud.set(blockedApps, forKey: "blockedApps") } }
     @Published var blockedDomains: [String] { didSet { ud.set(blockedDomains, forKey: "blockedDomains") } }
+    /// Pages allowed in both site modes, e.g. "github.com/me".
+    @Published var allowedPaths: [String] { didSet { ud.set(allowedPaths, forKey: "allowedPaths") } }
     @Published var appMode: ListMode { didSet { ud.set(appMode.rawValue, forKey: "appMode") } }
     @Published var siteMode: ListMode { didSet { ud.set(siteMode.rawValue, forKey: "siteMode") } }
     @Published var strict: Bool { didSet { ud.set(strict, forKey: "strict") } }
@@ -164,7 +194,14 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     @Published var notify: Bool {
         didSet {
             ud.set(notify, forKey: "notify")
-            if notify { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } }
+            if notify { requestNotifications() }
+        }
+    }
+    /// Notifications for pomodoro phase changes; `notify` covers everything else.
+    @Published var pomoNotify: Bool {
+        didSet {
+            ud.set(pomoNotify, forKey: "pomoNotify")
+            if pomoNotify { requestNotifications() }
         }
     }
     @Published var appAction: AppAction { didSet { ud.set(appAction.rawValue, forKey: "appAction") } }
@@ -212,11 +249,13 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         domains = ud.stringArray(forKey: "domains") ?? ["github.com", "google.com"]
         blockedApps = ud.stringArray(forKey: "blockedApps") ?? []
         blockedDomains = ud.stringArray(forKey: "blockedDomains") ?? ["youtube.com", "x.com"]
+        allowedPaths = ud.stringArray(forKey: "allowedPaths") ?? []
         appMode = ListMode(rawValue: ud.string(forKey: "appMode") ?? "") ?? .block
         siteMode = ListMode(rawValue: ud.string(forKey: "siteMode") ?? "") ?? .block
         strict = ud.bool(forKey: "strict")
         spareAgents = ud.bool(forKey: "spareAgents")
         notify = ud.bool(forKey: "notify")
+        pomoNotify = ud.bool(forKey: "pomoNotify")
         appAction = AppAction(rawValue: ud.string(forKey: "appAction") ?? "") ?? .quit
         siteAction = SiteAction(rawValue: ud.string(forKey: "siteAction") ?? "") ?? .page
         presets = ud.array(forKey: "presets") as? [Int] ?? [25, 50, 90]
@@ -380,7 +419,7 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         guard let round = pomoRound else { return }
         if onBreak {
             onBreak = false
-            if pomoAutoFocus { begin(pomoFocus) } else { post("Break over", "Start the next round from the menu bar.") }
+            if pomoAutoFocus { begin(pomoFocus) } else { post("Break over", "Start the next round from the menu bar.", pomodoro: true) }
         } else if let minutes = pomoBreak(after: round + 1, short: pomoShort, long: pomoLong, every: pomoEvery, goal: pomoGoal) {
             pomoRound = round + 1
             onBreak = true
@@ -404,6 +443,10 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         let d = normalizeDomain(raw)
         if !d.isEmpty, !domainList.contains(d) { domainList.append(d) }
     }
+    func addPath(_ raw: String) {
+        let p = normalizePath(raw)
+        if !p.isEmpty, !allowedPaths.contains(p) { allowedPaths.append(p) }
+    }
 
     /// Adds the site in the front window of the browser used last.
     func addCurrentSite() {
@@ -422,21 +465,22 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         if let f = NSWorkspace.shared.frontmostApplication, browsers[f.bundleIdentifier ?? ""] != nil { lastBrowser = f }
         let day = cal.startOfDay(for: now).timeIntervalSince1970
         if day != statsDay { statsDay = day; focusSeconds = 0; blocked = 0 }
+        let pomo = pomoRound != nil // read before phaseEnded, which clears it when a run finishes
         if pausedAt == nil, let f = focusUntil, f <= now { phaseEnded() }
 
         let active = isActive
         if active != wasActive {
             wasActive = active
             objectWillChange.send() // `now` isn't published; this is what flips the menu bar icon
-            if active { post("Focus started", endsAt.map { "Stay focused until \(clock($0))." } ?? "") }
+            if active { post("Focus started", endsAt.map { "Stay focused until \(clock($0))." } ?? "", pomodoro: pomo) }
             else {
                 asked.removeAll()
                 agents.removeAll() // pids get reused; re-check next block
                 Task { await tabs.forget() }
-                if isPaused { post("Focus paused", "\(hms(phaseRemaining)) left. Resume from the menu bar.") }
-                else if isBreak { post("Break time", "\(phaseRemaining / 60) min. Step away for a bit.") }
-                else if isWaiting { post("Round done", "Start your break from the menu bar.") }
-                else { post("Focus ended", "Nice work. Time for a break.") }
+                if isPaused { post("Focus paused", "\(hms(phaseRemaining)) left. Resume from the menu bar.", pomodoro: pomo) }
+                else if isBreak { post("Break time", "\(phaseRemaining / 60) min. Step away for a bit.", pomodoro: pomo) }
+                else if isWaiting { post("Round done", "Start your break from the menu bar.", pomodoro: pomo) }
+                else { post("Focus ended", "Nice work. Time for a break.", pomodoro: pomo) }
             }
         }
         guard active else { return }
@@ -466,9 +510,9 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
     private func checkTabs(_ targets: [TabTarget]) {
         guard !checkingTabs else { return }
         checkingTabs = true
-        let (domains, mode, action) = (domainList, siteMode, siteAction)
+        let (domains, mode, action, paths) = (domainList, siteMode, siteAction, allowedPaths)
         Task {
-            let (count, error) = await tabs.enforce(targets, domains: domains, mode: mode, action: action)
+            let (count, error) = await tabs.enforce(targets, domains: domains, mode: mode, paths: paths, action: action)
             checkingTabs = false
             if count > 0 { blocked += count }
             if browserError != error { browserError = error }
@@ -482,8 +526,12 @@ Focus time<div style="font-size:14px;font-weight:400;opacity:.6;margin-top:8px">
         return agents[pid]!
     }
 
-    private func post(_ title: String, _ body: String) {
-        guard notify else { return }
+    private func requestNotifications() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    private func post(_ title: String, _ body: String, pomodoro: Bool = false) {
+        guard pomodoro ? pomoNotify : notify else { return }
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
@@ -514,7 +562,7 @@ actor TabGuard {
     }
 
     /// Replaces or closes off-list tabs; returns how many, and an error worth showing.
-    func enforce(_ targets: [TabTarget], domains: [String], mode: ListMode, action: SiteAction) -> (blocked: Int, error: String?) {
+    func enforce(_ targets: [TabTarget], domains: [String], mode: ListMode, paths: [String], action: SiteAction) -> (blocked: Int, error: String?) {
         var count = 0, error: String?
         for t in targets {
             if !permitted.contains(t.pid) {
@@ -529,7 +577,7 @@ actor TabGuard {
             let windows = (bridge(t.pid)?.value(forKey: "windows") as? SBElementArray) ?? []
             for case let w as NSObject in windows.reversed() { // closing a last tab closes its window
                 guard let tab = w.value(forKey: t.tabKey) as? NSObject,
-                      let u = tab.value(forKey: "URL") as? String, !isAllowed(u, domains, mode) else { continue }
+                      let u = tab.value(forKey: "URL") as? String, !isAllowed(u, domains, mode, paths: paths) else { continue }
                 if action == .close { _ = tab.perform(NSSelectorFromString("close")) } else { tab.setValue(blockedURL, forKey: "URL") }
                 count += 1
             }

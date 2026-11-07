@@ -964,9 +964,13 @@ struct GeneralTab: View {
                     SoftSwitch(isOn: $s.pomoAutoBreak)
                         .accessibilityLabel("Start breaks automatically")
                 }
-                SettingsRow(title: "Start rounds automatically", note: "Begin the next focus round when a break ends.", divider: false) {
+                SettingsRow(title: "Start rounds automatically", note: "Begin the next focus round when a break ends.") {
                     SoftSwitch(isOn: $s.pomoAutoFocus)
                         .accessibilityLabel("Start rounds automatically")
+                }
+                SettingsRow(title: "Notifications", note: "A note when a round or break starts and ends.", divider: false) {
+                    SoftSwitch(isOn: $s.pomoNotify)
+                        .accessibilityLabel("Pomodoro notifications")
                 }
             }
         }
@@ -1243,32 +1247,7 @@ struct SitesTab: View {
 
             SettingsSection(title: s.siteMode == .allow ? "Allowed sites" : "Blocked sites",
                             note: "\(s.domainList.count)") {
-                VStack(spacing: 0) {
-                    if s.domainList.isEmpty {
-                        Text("No domains listed yet.")
-                            .font(.ui(11))
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 14)
-                    } else {
-                        ForEach(s.domainList, id: \.self) { domain in
-                            VStack(spacing: 0) {
-                                HStack(spacing: 9) {
-                                    Image(systemName: "globe")
-                                        .font(.system(size: 10, weight: .regular))
-                                        .foregroundStyle(.tertiary)
-                                        .frame(width: 15)
-                                    Text(domain)
-                                        .font(.code(11.5))
-                                    Spacer()
-                                    RemoveButton { s.domainList.removeAll { $0 == domain } }
-                                }
-                                .padding(.vertical, 9)
-                                if domain != s.domainList.last { DottedLine() }
-                            }
-                        }
-                    }
-                }
+                EntryList(items: $s.domainList, icon: "globe", empty: "No domains listed yet.")
 
                 SoftField(text: $newDomain, prompt: "example.com") {
                     s.addDomain(newDomain)
@@ -1292,10 +1271,64 @@ struct SitesTab: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 8)
             }
+
+            SettingsSection(title: "Always allowed pages", note: "\(s.allowedPaths.count)") {
+                EntryList(items: $s.allowedPaths, icon: "link", empty: "No pages listed yet.")
+
+                SoftField(text: $newPath, prompt: "github.com/you") {
+                    s.addPath(newPath)
+                }
+                .padding(.top, 10)
+
+                Text("Open in either mode, even on a blocked domain. Covers everything under the path, so github.com/you also allows github.com/you/repo. Add a query to pin one page, like youtube.com/watch?v=….")
+                    .font(.ui(9.5))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+            }
         }
     }
 
     @State private var newDomain = ""
+    @State private var newPath = ""
+}
+
+/// Rows of removable entries, as in the site lists.
+struct EntryList: View {
+    @Binding var items: [String]
+    var icon: String
+    var empty: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if items.isEmpty {
+                Text(empty)
+                    .font(.ui(11))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 14)
+            } else {
+                ForEach(items, id: \.self) { item in
+                    VStack(spacing: 0) {
+                        HStack(spacing: 9) {
+                            Image(systemName: icon)
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 15)
+                            Text(item)
+                                .font(.code(11.5))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            RemoveButton { items.removeAll { $0 == item } }
+                        }
+                        .padding(.vertical, 9)
+                        if item != items.last { DottedLine() }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // MARK: - App
