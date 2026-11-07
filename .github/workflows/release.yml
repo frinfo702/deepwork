@@ -9,9 +9,15 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    # The SDK decides the UI the app gets at runtime: built against SDK 15 it runs in the
+    # pre-Liquid Glass compatibility look, where the menu bar panel's window chrome differs
+    # from local builds (that's how the v0.4.5 panel shadow came back). Keep it current.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require SDK 26+
+        run: xcrun --show-sdk-version && [ "$(xcrun --show-sdk-version | cut -d. -f1)" -ge 26 ]
 
       - name: Self-test
         run: swiftc -Onone -parse-as-library -swift-version 5 Sources/*.swift -o /tmp/dw && /tmp/dw --selftest
